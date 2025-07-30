@@ -60,6 +60,8 @@ export interface ImapConfig {
     connTimeout: number;
     authTimeout: number;
     keepalive: boolean;
+    debug?: any;
+    autotls?: 'always' | 'required' | 'never';
 }
 export interface ElasticsearchConfig {
     node: string;
@@ -68,6 +70,7 @@ export interface ElasticsearchConfig {
 }
 export interface GeminiConfig {
     apiKey: string;
+    embeddingApiKey: string;
     model: string;
     temperature: number;
     maxTokens: number;

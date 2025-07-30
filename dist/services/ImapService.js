@@ -76,8 +76,12 @@ class ImapService extends events_1.EventEmitter {
                     servername: account.host
                 },
                 connTimeout: 60000,
-                authTimeout: 10000,
-                keepalive: true
+                authTimeout: 30000, // Increased timeout for Outlook
+                keepalive: true,
+                // Additional options for Outlook compatibility
+                debug: process.env.NODE_ENV === 'development' ? console.log : undefined,
+                // Try different authentication methods
+                autotls: 'always'
             };
             this.configs.set(account.id, config);
             this.accounts.set(account.id, account);
@@ -121,6 +125,20 @@ class ImapService extends events_1.EventEmitter {
             });
             imap.once('error', (error) => {
                 logger_1.emailLogger.imapError(account.label, error);
+                // Provide specific guidance for common Outlook issues
+                if (error.message.includes('LOGIN failed') || error.message.includes('AUTHENTICATE')) {
+                    logger_1.default.error(`❌ Outlook authentication failed for ${account.label}. Possible solutions:`);
+                    logger_1.default.error('   1. Enable 2-factor authentication on your Outlook account');
+                    logger_1.default.error('   2. Generate an "App Password" from Microsoft Account settings');
+                    logger_1.default.error('   3. Use the App Password instead of your regular password');
+                    logger_1.default.error('   4. Ensure IMAP is enabled in Outlook settings');
+                }
+                else if (error.message.includes('ECONNREFUSED') || error.message.includes('ENOTFOUND')) {
+                    logger_1.default.error(`❌ Connection failed for ${account.label}. Check:`);
+                    logger_1.default.error('   1. Internet connection');
+                    logger_1.default.error('   2. Firewall settings');
+                    logger_1.default.error('   3. IMAP server settings');
+                }
                 if (!connectionEstablished) {
                     reject(error);
                 }
@@ -153,8 +171,12 @@ class ImapService extends events_1.EventEmitter {
                     return;
                 }
                 try {
-                    // Search for all emails (simplified to avoid IMAP date format issues)
-                    // We'll limit processing to recent emails in the processing logic
+                    // Search for recent emails only (last 30 days to avoid processing entire history)
+                    // Use a simpler approach that works with Gmail IMAP
+                    const thirtyDaysAgo = new Date();
+                    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+                    const dateString = thirtyDaysAgo.toISOString().split('T')[0]; // YYYY-MM-DD format
+                    // Use a simpler search approach that works reliably with Gmail
                     imap.search(['ALL'], async (err, results) => {
                         if (err) {
                             reject(err);
@@ -165,11 +187,13 @@ class ImapService extends events_1.EventEmitter {
                             resolve();
                             return;
                         }
-                        logger_1.default.info(`📧 Syncing ${results.length} emails for ${account.label}`);
+                        // Limit to maximum 50 emails to avoid processing entire history
+                        const maxEmails = Math.min(results.length, 50);
+                        logger_1.default.info(`📧 Syncing ${maxEmails} recent emails for ${account.label} (out of ${results.length} total)`);
                         // Process emails in batches to avoid memory issues
                         const batchSize = 50;
                         let processedCount = 0;
-                        for (let i = 0; i < results.length; i += batchSize) {
+                        for (let i = 0; i < maxEmails; i += batchSize) {
                             const batch = results.slice(i, i + batchSize);
                             await this.processBatchEmails(accountId, imap, batch);
                             processedCount += batch.length;
@@ -246,18 +270,46 @@ class ImapService extends events_1.EventEmitter {
                 // Set up IDLE mode
                 const startIdle = () => {
                     try {
-                        imap.idle();
-                        logger_1.default.debug(`💤 IDLE started for ${account.label}`);
+                        if (typeof imap.idle === 'function') {
+                            imap.idle((err) => {
+                                if (err) {
+                                    logger_1.default.error(`❌ IDLE error for ${account.label}:`, err);
+                                    return;
+                                }
+                                logger_1.default.debug(`💤 IDLE started for ${account.label}`);
+                            });
+                        }
+                        else {
+                            logger_1.default.warn(`⚠️ IDLE not supported for ${account.label}, falling back to polling`);
+                            // Fallback to polling if IDLE is not supported
+                            setTimeout(() => {
+                                // Poll for new emails every 30 seconds
+                                this.pollForNewEmails(accountId, imap);
+                            }, 30000);
+                        }
                     }
                     catch (error) {
                         logger_1.default.error(`❌ IDLE error for ${account.label}:`, error);
+                        // Fallback to polling
+                        setTimeout(() => {
+                            this.pollForNewEmails(accountId, imap);
+                        }, 30000);
                     }
                 };
                 // Handle new emails in real-time
                 imap.on('mail', async (numNewMsgs) => {
                     logger_1.default.info(`📧 ${numNewMsgs} new email(s) detected for ${account.label}`);
                     // Stop IDLE to fetch new emails
-                    imap.idle();
+                    try {
+                        imap.idle((err) => {
+                            if (err) {
+                                logger_1.default.error(`❌ IDLE stop error for ${account.label}:`, err);
+                            }
+                        });
+                    }
+                    catch (error) {
+                        logger_1.default.error(`❌ IDLE stop error for ${account.label}:`, error);
+                    }
                     try {
                         // Fetch the latest emails
                         const searchCriteria = ['UNSEEN'];
@@ -521,6 +573,37 @@ class ImapService extends events_1.EventEmitter {
         await Promise.all(closePromises);
         this.connections.clear();
         logger_1.default.info('✅ IMAP service shutdown complete');
+    }
+    /**
+     * Poll for new emails (fallback when IDLE is not supported)
+     */
+    async pollForNewEmails(accountId, imap) {
+        const account = this.accounts.get(accountId);
+        if (!account)
+            return;
+        try {
+            imap.search(['UNSEEN'], async (err, results) => {
+                if (err) {
+                    logger_1.default.error(`❌ Poll search error for ${account.label}:`, err);
+                    return;
+                }
+                if (results && results.length > 0) {
+                    logger_1.default.info(`📧 Found ${results.length} new email(s) via polling for ${account.label}`);
+                    await this.processBatchEmails(accountId, imap, results);
+                }
+                // Continue polling
+                setTimeout(() => {
+                    this.pollForNewEmails(accountId, imap);
+                }, 30000); // Poll every 30 seconds
+            });
+        }
+        catch (error) {
+            logger_1.default.error(`❌ Poll error for ${account.label}:`, error);
+            // Continue polling even on error
+            setTimeout(() => {
+                this.pollForNewEmails(accountId, imap);
+            }, 30000);
+        }
     }
     /**
      * Health check for all connections

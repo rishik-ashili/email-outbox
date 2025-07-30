@@ -1,5 +1,5 @@
 import { Pinecone } from '@pinecone-database/pinecone';
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import {
     RAGContext,
     Email,
@@ -8,9 +8,10 @@ import {
 import logger, { emailLogger } from '../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
 
-// Simple interface for OpenAI embeddings (since Gemini doesn't provide embeddings API)
+// Interface for Gemini embeddings configuration
 interface EmbeddingConfig {
     apiKey: string;
+    model?: string;
 }
 
 interface VectorSearchResult {
@@ -25,12 +26,12 @@ interface EmbeddingCache {
 
 export class VectorService {
     private pinecone: Pinecone;
-    private openai: OpenAI;
+    private gemini: GoogleGenerativeAI;
     private indexName: string;
     private embeddingCache: EmbeddingCache = {};
     private isInitialized: boolean = false;
-    private readonly EMBEDDING_MODEL = 'text-embedding-ada-002';
-    private readonly VECTOR_DIMENSION = 1024; // Match Pinecone index dimension
+    private readonly EMBEDDING_MODEL = 'gemini-embedding-001'; // Correct Gemini embedding model
+    private readonly VECTOR_DIMENSION = 1024; // Match your existing Pinecone index dimension
     private readonly TOP_K_RESULTS = 5; // Number of similar contexts to retrieve
 
     constructor(pineconeConfig: PineconeConfig, embeddingConfig: EmbeddingConfig) {
@@ -38,13 +39,11 @@ export class VectorService {
             apiKey: pineconeConfig.apiKey
         });
 
-        this.openai = new OpenAI({
-            apiKey: embeddingConfig.apiKey,
-        });
+        this.gemini = new GoogleGenerativeAI(embeddingConfig.apiKey);
 
         this.indexName = pineconeConfig.index;
 
-        logger.info('🧠 Vector service initialized (using OpenAI for embeddings only)');
+        logger.info('🧠 Vector service initialized (using separate embedding API key)');
     }
 
     /**
@@ -77,6 +76,7 @@ export class VectorService {
                 logger.info(`✅ Connected to existing Pinecone index: ${this.indexName}`);
 
                 // Seed with default contexts if needed
+                this.isInitialized = true;
                 await this.seedDefaultContexts();
 
                 this.isInitialized = true;
@@ -228,21 +228,27 @@ export class VectorService {
         // Check cache first
         const cacheKey = this.hashText(text);
         if (this.embeddingCache[cacheKey]) {
-            return this.embeddingCache[cacheKey];
+            // Get the embedding from the cache
+            const cachedEmbedding = this.embeddingCache[cacheKey];
+            // Ensure it's padded/truncated and then return it
+            return this.padEmbeddingToDimension(cachedEmbedding, this.VECTOR_DIMENSION);
         }
 
         try {
-            const response = await this.openai.embeddings.create({
-                model: this.EMBEDDING_MODEL,
-                input: text.replace(/\n/g, ' ').trim()
-            });
+            // Use the correct Gemini embedding API with specific dimension
+            const model = this.gemini.getGenerativeModel({ model: this.EMBEDDING_MODEL });
 
-            const embedding = response.data[0].embedding;
+            const result = await model.embedContent(text.replace(/\n/g, ' ').trim());
 
-            // Cache the embedding
-            this.embeddingCache[cacheKey] = embedding;
+            const embedding = result.embedding.values;
 
-            return embedding;
+            // Pad or truncate the new embedding to the correct dimension
+            const finalEmbedding = this.padEmbeddingToDimension(embedding, this.VECTOR_DIMENSION);
+
+            // Cache the final, correctly-dimensioned embedding
+            this.embeddingCache[cacheKey] = finalEmbedding;
+
+            return finalEmbedding;
         } catch (error) {
             logger.error('❌ Failed to generate embedding:', error);
             throw error;
@@ -581,5 +587,26 @@ export class VectorService {
 
     private delay(ms: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    /**
+     * Pad or truncate embedding to match the required dimension
+     */
+    private padEmbeddingToDimension(embedding: number[], targetDimension: number): number[] {
+        if (embedding.length === targetDimension) {
+            return embedding;
+        }
+
+        if (embedding.length > targetDimension) {
+            // Truncate if embedding is larger than target
+            return embedding.slice(0, targetDimension);
+        }
+
+        // Pad with zeros if embedding is smaller than target
+        const padded = [...embedding];
+        while (padded.length < targetDimension) {
+            padded.push(0);
+        }
+        return padded;
     }
 } 

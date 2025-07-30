@@ -16,8 +16,13 @@ export class AIService {
     private processingConfig: AIProcessingConfig;
     private rateLimiter: { lastCall: number; callCount: number } = { lastCall: 0, callCount: 0 };
     private categoryCache: Map<string, EmailCategory> = new Map();
-    private readonly RATE_LIMIT_PER_MINUTE = 30; // Reduce from default
+    private dailyQuotaTracker: { date: string; calls: number } = { date: '', calls: 0 };
+    private readonly RATE_LIMIT_PER_MINUTE = 0.5; // Reduced to 1 request per 2 minutes for free tier
     private readonly RATE_LIMIT_WINDOW = 60000; // 1 minute in ms
+    private readonly DAILY_QUOTA_LIMIT = 40; // Reduced limit for gemini-1.5-flash (50 - 10 buffer)
+    private readonly HEALTH_CHECK_INTERVAL = 600000; // 10 minutes (reduced health checks)
+    private lastHealthCheck = 0;
+    private healthCheckCache = false;
 
     // Exact categorization prompt as specified in blueprint
     private readonly CATEGORIZATION_PROMPT = `
@@ -62,11 +67,14 @@ Reply:
 
         this.gemini = new GoogleGenerativeAI(config.apiKey);
 
+        // Initialize daily quota tracker
+        this.resetDailyQuotaIfNeeded();
+
         logger.info('🤖 AI Service initialized with Gemini');
     }
 
     /**
-     * Categorize email using OpenAI
+     * Categorize email using AI with intelligent caching and quota management
      */
     async categorizeEmail(email: Email): Promise<EmailCategory> {
         if (!this.processingConfig.categorizationEnabled) {
@@ -82,7 +90,21 @@ Reply:
             return cachedCategory;
         }
 
-        // Check if Gemini service is available
+        // Simple keyword-based categorization for common patterns to reduce API calls
+        const simpleCategory = this.simpleKeywordCategorization(email);
+        if (simpleCategory) {
+            logger.debug(`🏷️ Using keyword-based categorization for email: ${email.subject} -> ${simpleCategory}`);
+            this.categoryCache.set(cacheKey, simpleCategory);
+            return simpleCategory;
+        }
+
+        // Check daily quota before making API call
+        if (this.isDailyQuotaExceeded()) {
+            logger.warn('⚠️ Daily quota exceeded, using default category');
+            return 'Spam';
+        }
+
+        // Check if Gemini service is available (with caching)
         const isHealthy = await this.healthCheck();
         if (!isHealthy) {
             logger.warn('⚠️ Gemini service unavailable, using default category');
@@ -92,14 +114,14 @@ Reply:
         const startTime = Date.now();
 
         try {
-            // Prepare prompt with email content
+            // Prepare prompt with email content (truncated for efficiency)
             const prompt = this.CATEGORIZATION_PROMPT
                 .replace('{subject}', email.subject || '(no subject)')
                 .replace('{body}', this.sanitizeEmailBody(email.body));
 
             // Call Gemini API with retry logic for rate limits
             let attempts = 0;
-            const maxAttempts = 3;
+            const maxAttempts = 2; // Reduced attempts to save quota
 
             while (attempts < maxAttempts) {
                 try {
@@ -139,12 +161,15 @@ Reply:
                     }
 
                     // Limit cache size to prevent memory issues
-                    if (this.categoryCache.size > 1000) {
+                    if (this.categoryCache.size > 500) { // Reduced cache size
                         const firstKey = this.categoryCache.keys().next().value;
                         if (firstKey) {
                             this.categoryCache.delete(firstKey);
                         }
                     }
+
+                    // Increment daily quota counter
+                    this.incrementDailyQuota();
 
                     const duration = Date.now() - startTime;
                     emailLogger.aiProcessing('categorization', email.id, duration);
@@ -191,7 +216,7 @@ Reply:
         }
 
         const results = new Map<string, EmailCategory>();
-        const batchSize = this.processingConfig.batchSize;
+        const batchSize = Math.min(this.processingConfig.batchSize, 2); // Further reduced batch size
 
         logger.info(`🤖 Starting batch categorization of ${emails.length} emails`);
 
@@ -201,7 +226,7 @@ Reply:
 
             const batchPromises = batch.map(async (email) => {
                 let attempts = 0;
-                const maxAttempts = this.processingConfig.retryAttempts;
+                const maxAttempts = Math.min(this.processingConfig.retryAttempts, 2); // Reduced attempts
 
                 while (attempts < maxAttempts) {
                     try {
@@ -223,9 +248,9 @@ Reply:
 
             await Promise.all(batchPromises);
 
-            // Small delay between batches to respect rate limits
+            // Longer delay between batches to respect rate limits
             if (i + batchSize < emails.length) {
-                await this.delay(1000);
+                await this.delay(5000); // 5 second delay (increased)
             }
         }
 
@@ -242,6 +267,11 @@ Reply:
     ): Promise<ReplyGeneration> {
         if (!this.processingConfig.replySuggestionsEnabled) {
             throw new Error('Reply suggestions are disabled');
+        }
+
+        // Check daily quota before making API call
+        if (this.isDailyQuotaExceeded()) {
+            throw new Error('Daily quota exceeded for reply generation');
         }
 
         const startTime = Date.now();
@@ -273,6 +303,9 @@ Reply:
 
             // Calculate confidence based on context availability and response quality
             const confidence = this.calculateReplyConfidence(suggestedReply, relevantContexts);
+
+            // Increment daily quota counter
+            this.incrementDailyQuota();
 
             const duration = Date.now() - startTime;
             emailLogger.aiProcessing('reply-generation', email.id, duration);
@@ -325,6 +358,12 @@ Reply:
      * Analyze email sentiment (positive, negative, neutral)
      */
     async analyzeEmailSentiment(email: Email): Promise<'positive' | 'negative' | 'neutral'> {
+        // Check daily quota before making API call
+        if (this.isDailyQuotaExceeded()) {
+            logger.warn('⚠️ Daily quota exceeded, returning neutral sentiment');
+            return 'neutral';
+        }
+
         try {
             const prompt = `
 Analyze the sentiment of this email and respond with ONLY one word: positive, negative, or neutral.
@@ -345,6 +384,9 @@ Sentiment:
             });
 
             const sentiment = response.response?.text?.trim().toLowerCase();
+
+            // Increment daily quota counter
+            this.incrementDailyQuota();
 
             if (['positive', 'negative', 'neutral'].includes(sentiment)) {
                 return sentiment as 'positive' | 'negative' | 'neutral';
@@ -380,7 +422,7 @@ Sentiment:
         return body
             .replace(/\s+/g, ' ')
             .trim()
-            .substring(0, 2000); // Limit to 2000 characters to stay within token limits
+            .substring(0, 1000); // Reduced to 1000 characters to save tokens
     }
 
     private calculateReplyConfidence(reply: string, contexts: RAGContext[]): number {
@@ -439,6 +481,74 @@ Sentiment:
     }
 
     /**
+     * Daily quota management
+     */
+    private resetDailyQuotaIfNeeded(): void {
+        const today = new Date().toDateString();
+        if (this.dailyQuotaTracker.date !== today) {
+            this.dailyQuotaTracker.date = today;
+            this.dailyQuotaTracker.calls = 0;
+            logger.info('🔄 Daily quota reset');
+        }
+    }
+
+    private incrementDailyQuota(): void {
+        this.resetDailyQuotaIfNeeded();
+        this.dailyQuotaTracker.calls++;
+        logger.debug(`📊 Daily quota: ${this.dailyQuotaTracker.calls}/${this.DAILY_QUOTA_LIMIT}`);
+    }
+
+    private isDailyQuotaExceeded(): boolean {
+        this.resetDailyQuotaIfNeeded();
+        return this.dailyQuotaTracker.calls >= this.DAILY_QUOTA_LIMIT;
+    }
+
+    /**
+     * Simple keyword-based categorization to reduce API calls
+     */
+    private simpleKeywordCategorization(email: Email): EmailCategory | null {
+        const text = `${email.subject} ${email.body}`.toLowerCase();
+
+        // Spam indicators
+        const spamKeywords = [
+            'free', 'limited time', 'offer', 'discount', 'upgrade', 'premium', 'get access',
+            'blackbox', 'intercom', 'marketing', 'promotional', 'newsletter', 'subscribe',
+            'unsubscribe', 'click here', 'claim now', 'special offer', 'deal', 'sale',
+            'qwiklab', 'arcade', 'badge', 'earned', 'finished', 'verification'
+        ];
+
+        if (spamKeywords.some(keyword => text.includes(keyword))) {
+            return 'Spam';
+        }
+
+        // Out of Office indicators
+        const oooKeywords = ['out of office', 'vacation', 'away', 'unavailable', 'return on'];
+        if (oooKeywords.some(keyword => text.includes(keyword))) {
+            return 'Out of Office';
+        }
+
+        // Meeting indicators
+        const meetingKeywords = ['meeting', 'call', 'schedule', 'appointment', 'zoom', 'calendar'];
+        if (meetingKeywords.some(keyword => text.includes(keyword))) {
+            return 'Meeting Booked';
+        }
+
+        // Not interested indicators
+        const notInterestedKeywords = ['not interested', 'decline', 'unfortunately', 'not looking'];
+        if (notInterestedKeywords.some(keyword => text.includes(keyword))) {
+            return 'Not Interested';
+        }
+
+        // Interested indicators
+        const interestedKeywords = ['interested', 'partnership', 'collaboration', 'discuss', 'proposal'];
+        if (interestedKeywords.some(keyword => text.includes(keyword))) {
+            return 'Interested';
+        }
+
+        return null; // Let AI handle complex cases
+    }
+
+    /**
      * Generate cache key for email categorization
      */
     private generateCacheKey(email: Email): string {
@@ -447,12 +557,29 @@ Sentiment:
     }
 
     /**
-     * Health check for OpenAI API
+     * Health check for Gemini API with caching
      */
     async healthCheck(): Promise<boolean> {
+        const now = Date.now();
+
+        // Use cached health check result if recent
+        if (now - this.lastHealthCheck < this.HEALTH_CHECK_INTERVAL) {
+            logger.debug(`🏥 Using cached health check result: ${this.healthCheckCache}`);
+            return this.healthCheckCache;
+        }
+
+        // Check daily quota before making API call
+        if (this.isDailyQuotaExceeded()) {
+            logger.warn('⚠️ Daily quota exceeded, skipping health check');
+            return false;
+        }
+
         try {
+            logger.debug('🏥 Starting Gemini health check...');
+
             // Use the configured model (gemini-2.5-pro)
             let modelName = this.config.model;
+            logger.debug(`🏥 Using model: ${modelName}`);
 
             const model = this.gemini.getGenerativeModel({ model: modelName });
 
@@ -461,13 +588,31 @@ Sentiment:
                 setTimeout(() => reject(new Error('Health check timeout')), 5000); // 5 second timeout
             });
 
+            logger.debug('🏥 Making API call to Gemini...');
             const result = await Promise.race([
                 model.generateContent("hello"),
                 timeoutPromise
             ]);
-            return result.response.text().length > 0;
+
+            const responseText = result.response.text();
+            logger.debug(`🏥 Gemini response: ${responseText.substring(0, 50)}...`);
+
+            // Update cache
+            this.lastHealthCheck = now;
+            this.healthCheckCache = responseText.length > 0;
+
+            // Increment daily quota counter
+            this.incrementDailyQuota();
+
+            logger.info('✅ Gemini health check passed');
+            return this.healthCheckCache;
         } catch (error) {
             logger.error('❌ Gemini health check failed:', error);
+
+            // Update cache
+            this.lastHealthCheck = now;
+            this.healthCheckCache = false;
+
             return false;
         }
     }
@@ -515,5 +660,25 @@ Sentiment:
             lastCall: this.rateLimiter.lastCall,
             limit: this.RATE_LIMIT_PER_MINUTE
         };
+    }
+
+    /**
+     * Get daily quota status
+     */
+    getDailyQuotaStatus(): { calls: number; limit: number; date: string } {
+        this.resetDailyQuotaIfNeeded();
+        return {
+            calls: this.dailyQuotaTracker.calls,
+            limit: this.DAILY_QUOTA_LIMIT,
+            date: this.dailyQuotaTracker.date
+        };
+    }
+
+    /**
+     * Clear cache to free memory
+     */
+    clearCache(): void {
+        this.categoryCache.clear();
+        logger.info('🗑️ AI service cache cleared');
     }
 } 

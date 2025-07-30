@@ -17,7 +17,7 @@ export class ChatService {
     private elasticsearchService: ElasticsearchService;
     private sessions: Map<string, ChatSession> = new Map();
     private rateLimiter: { lastCall: number; callCount: number } = { lastCall: 0, callCount: 0 };
-    private readonly RATE_LIMIT_PER_MINUTE = 20; // Lower limit for chat
+    private readonly RATE_LIMIT_PER_MINUTE = 1; // Reduced rate limit
     private readonly RATE_LIMIT_WINDOW = 60000; // 1 minute in ms
 
     constructor(config: GeminiConfig, elasticsearchService: ElasticsearchService) {

@@ -18,6 +18,7 @@ A feature-rich email aggregation system that synchronizes multiple IMAP accounts
 - **Secure & Scalable**: Production-ready with comprehensive error handling
 - **Circuit Breaker Pattern**: Resilient external API calls
 - **Real-time Updates**: WebSocket support for live email updates
+- **AI Quota Management**: Intelligent caching and rate limiting for Gemini API
 
 ## 🏗️ Architecture
 
@@ -42,7 +43,6 @@ A feature-rich email aggregation system that synchronizes multiple IMAP accounts
 - **Docker** and Docker Compose
 - **Email accounts** with app passwords (Gmail, Outlook, Yahoo)
 - **Google Gemini API key** (from Google AI Studio)
-- **OpenAI API key** (for embeddings only - Gemini doesn't provide embeddings)
 - **Pinecone account** (free tier available)
 - **Slack workspace** (optional, for notifications)
 
@@ -155,17 +155,14 @@ EMAIL2_PORT=993
 #### AI Services (Required)
 ```env
 # Google Gemini AI
-GEMINI_API_KEY=AIzaSyBddv1B8jw9nGD4m6UhYuaSlT-rdsSV2_4
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_MODEL=gemini-2.5-pro
 GEMINI_TEMPERATURE=0
-
-# OpenAI (for embeddings only - Gemini doesn't provide embeddings)
-OPENAI_API_KEY=sk-your-openai-key-for-embeddings-only
 
 # Pinecone (for RAG)
 PINECONE_API_KEY=your-pinecone-api-key
-PINECONE_INDEX=email-context
-PINECONE_ENVIRONMENT=us-west1-gcp-free
+PINECONE_INDEX=email
+PINECONE_ENVIRONMENT=us-east-1
 ```
 
 #### Notifications (Optional)
@@ -197,6 +194,77 @@ The system automatically categorizes emails into these **exact** categories:
 - **`Not Interested`** - Explicit decline or disinterest
 - **`Spam`** - Promotional, suspicious, or irrelevant content
 - **`Out of Office`** - Auto-reply indicating unavailability
+
+## 🤖 AI Quota Management
+
+### Problem Solved
+- **Issue**: Gemini API daily quota exceeded (100 requests/day free tier)
+- **Result**: All emails categorized as "Spam" due to API failures
+- **Solution**: Comprehensive quota management with intelligent caching
+
+### Features Implemented
+
+#### 1. Daily Quota Tracking
+- ✅ **Conservative Limit**: 80 calls/day (100 - 20 buffer)
+- ✅ **Automatic Reset**: Daily quota resets at midnight
+- ✅ **Real-time Monitoring**: Track calls made vs. limit
+
+#### 2. Intelligent Caching
+- ✅ **Email Categorization Cache**: Avoid duplicate API calls
+- ✅ **Health Check Cache**: 5-minute cache for service status
+- ✅ **Cache Size Management**: 500 entries max to prevent memory issues
+
+#### 3. Rate Limiting Optimization
+- ✅ **Reduced Rate**: 1 request/minute (was 3)
+- ✅ **Exponential Backoff**: Smart retry logic
+- ✅ **Reduced Attempts**: 2 max attempts (was 3)
+
+#### 4. Content Optimization
+- ✅ **Truncated Content**: 1000 chars max (was 2000)
+- ✅ **Efficient Prompts**: Streamlined categorization prompts
+- ✅ **Batch Processing**: Reduced batch size to 5 emails
+
+### AI Control Endpoints
+
+```bash
+# Monitor quota usage
+GET /api/ai/rate-limit-status
+
+# Disable AI categorization when quota is low
+POST /api/ai/disable-categorization
+
+# Re-enable AI categorization
+POST /api/ai/enable-categorization
+
+# Clear AI cache to free memory
+POST /api/ai/clear-cache
+```
+
+### Current Status Check
+```bash
+curl http://localhost:3000/api/ai/rate-limit-status
+```
+
+Expected response:
+```json
+{
+  "success": true,
+  "data": {
+    "quota": {
+      "calls": 0,
+      "limit": 80,
+      "date": "Wed Jul 30 2025"
+    },
+    "rateLimit": {
+      "callCount": 0,
+      "lastCall": 0,
+      "limit": 1
+    },
+    "categorizationEnabled": true,
+    "model": "gemini-2.5-pro"
+  }
+}
+```
 
 ## 📡 API Endpoints
 
@@ -243,7 +311,7 @@ Returns AI-generated reply with confidence score and context used.
 GET /api/stats
 ```
 
-Returns dashboard statistics including category counts, account status, etc.
+Returns dashboard statistics including category counts, account status, AI quota status, etc.
 
 #### Account Management
 ```http
@@ -332,6 +400,188 @@ GET /api/chat/stats
 - "Which emails need urgent attention?"
 - "Find all emails about the project proposal"
 
+## 🧪 Testing & Verification
+
+### Phase 1: Setup Verification
+
+1. **System Health Check**
+```bash
+curl http://localhost:3000/health
+```
+Expected: All services show `true`
+
+2. **Baseline Stats**
+```bash
+curl http://localhost:3000/api/stats
+```
+Expected: Shows current email counts and AI quota status
+
+3. **Chat Test**
+```bash
+curl -X POST "http://localhost:3000/api/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello, what can you help me with?"}'
+```
+
+### Phase 2: Email Account Setup
+
+1. **Add Your Real Email Account**
+```bash
+# Create account.json with your credentials
+{
+  "label": "My Gmail",
+  "user": "your-email@gmail.com",
+  "password": "your-app-password",
+  "host": "imap.gmail.com",
+  "port": 993
+}
+
+# Add the account
+curl -X POST "http://localhost:3000/api/accounts" \
+  -H "Content-Type: application/json" \
+  -d @account.json
+```
+
+2. **Verify Account Connection**
+```bash
+curl http://localhost:3000/api/accounts
+```
+
+### Phase 3: Test Email Processing
+
+Send these test emails from **another email account** to your configured Gmail:
+
+#### 📧 Test Email 1: Interested Lead
+```
+To: your-configured-gmail@gmail.com
+Subject: Re: Software Development Partnership Opportunity
+
+Hi,
+
+I'm very interested in discussing a potential software development partnership. 
+Our company is looking to build a new mobile application and would like to 
+explore working with your team.
+
+Could we schedule a call this week to discuss the project requirements?
+
+Best regards,
+John Smith
+TechCorp Industries
+```
+
+#### 📧 Test Email 2: Meeting Booking  
+```
+To: your-configured-gmail@gmail.com
+Subject: Confirmed: Strategy Meeting Tomorrow at 2 PM
+
+Hi,
+
+This is to confirm our strategy meeting scheduled for tomorrow at 2 PM.
+The meeting will be held via Zoom. Please find the meeting details below:
+
+Meeting Link: https://zoom.us/j/123456789
+Time: Tomorrow, 2:00 PM - 3:00 PM EST
+
+See you there!
+
+Best,
+Sarah Johnson
+```
+
+#### 📧 Test Email 3: Not Interested
+```
+To: your-configured-gmail@gmail.com
+Subject: Re: Business Proposal
+
+Thank you for your proposal, but we are not interested at this time.
+We have already partnered with another vendor for this project.
+
+Best regards,
+Mike Wilson
+```
+
+### Phase 4: Verification Commands
+
+**Wait 2-3 minutes** after sending emails, then run:
+
+1. **Check Updated Statistics**
+```bash
+curl http://localhost:3000/api/stats
+```
+Expected: `totalEmails` should increase, category counts should show distribution
+
+2. **View Processed Emails**
+```bash
+curl http://localhost:3000/api/emails?limit=10
+```
+Expected: JSON array with emails, each having a `category` field
+
+3. **Test Category Filtering**
+```bash
+# Check interested leads
+curl "http://localhost:3000/api/emails?category=Interested"
+
+# Check meeting bookings  
+curl "http://localhost:3000/api/emails?category=Meeting%20Booked"
+
+# Check not interested
+curl "http://localhost:3000/api/emails?category=Not%20Interested"
+```
+
+4. **Test Vector Database (RAG)**
+```bash
+# Test if AI can find emails about specific topics
+curl -X POST "http://localhost:3000/api/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What emails did I receive about software development?"}'
+
+# Test contextual responses
+curl -X POST "http://localhost:3000/api/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "How should I respond to partnership emails?"}'
+```
+
+5. **Test Email Search**
+```bash
+# Search by keyword
+curl "http://localhost:3000/api/emails/search?q=meeting"
+
+# Search by sender
+curl "http://localhost:3000/api/emails/search?from=john@example.com"
+```
+
+### Expected Results ✅
+
+#### Terminal Logs Should Show:
+```
+info: 📧 Processing new email: Re: Software Development Partnership from john@example.com
+info: 🤖 AI categorizing email with Gemini
+info: 📊 Email categorized as: Interested  
+info: 🧠 Stored email context in vector database: email-123
+info: ✅ Email processed successfully
+```
+
+#### API Stats Should Show:
+```json
+{
+  "totalEmails": 685,  // Increased count
+  "categoryCounts": {
+    "Interested": 1,     // ← New properly categorized emails
+    "Meeting Booked": 1, // ← New properly categorized emails  
+    "Not Interested": 1, // ← New properly categorized emails
+    "Spam": 682,         // ← Previous emails remain as spam
+    "Out of Office": 0
+  },
+  "ai": {
+    "quota": {
+      "calls": 3,
+      "limit": 80,
+      "date": "Wed Jul 30 2025"
+    }
+  }
+}
+```
+
 ## 🔍 Advanced Usage
 
 ### Real-time Email Processing Pipeline
@@ -339,9 +589,11 @@ GET /api/chat/stats
 ```
 New Email Received (IMAP IDLE)
          ↓
-AI Categorization (OpenAI)
+AI Categorization (Gemini)
          ↓
 Elasticsearch Indexing
+         ↓
+Vector Database Storage (Pinecone)
          ↓
 Notification Logic (if "Interested")
          ↓
@@ -371,7 +623,7 @@ The system uses Pinecone vector database to store context information that helps
 
 1. **Extract keywords** from incoming email
 2. **Search vector database** for relevant context
-3. **Generate reply** using OpenAI with retrieved context
+3. **Generate reply** using Gemini with retrieved context
 4. **Return suggestion** with confidence score
 
 ## 🔧 Development
@@ -460,7 +712,7 @@ tail -f logs/email-onebox.log
 ### Security Checklist
 
 - [ ] Use app passwords for Gmail accounts
-- [ ] Keep OpenAI API keys secure
+- [ ] Keep Gemini API keys secure
 - [ ] Use HTTPS in production
 - [ ] Configure firewall rules
 - [ ] Monitor logs for suspicious activity
@@ -527,6 +779,7 @@ CMD ["node", "dist/app.js"]
 - **Elasticsearch Performance**: Search response times
 - **Notification Delivery**: Success rates for Slack/webhooks
 - **System Resources**: Memory usage, CPU usage
+- **AI Quota Usage**: Daily API call consumption
 
 ### Health Check Endpoints
 
@@ -539,6 +792,9 @@ curl http://localhost:3000/api/stats
 
 # Account connection status
 curl http://localhost:3000/api/accounts
+
+# AI quota status
+curl http://localhost:3000/api/ai/rate-limit-status
 ```
 
 ## 🐛 Troubleshooting
@@ -575,10 +831,8 @@ grep "Gemini.*failed" logs/email-onebox.log
 # Monitor rate limits in logs
 grep "rate limit" logs/email-onebox.log
 
-# Test Gemini API manually (if needed)
-curl -H "Content-Type: application/json" \
-     -d '{"contents":[{"parts":[{"text":"Hello"}]}]}' \
-     "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=$GEMINI_API_KEY"
+# Check quota status
+curl http://localhost:3000/api/ai/rate-limit-status
 ```
 
 #### High Memory Usage
@@ -589,8 +843,20 @@ npm run logs:memory
 # Restart application
 pm2 restart email-onebox
 
-# Clear vector cache
-curl -X POST http://localhost:3000/api/cache/clear
+# Clear AI cache
+curl -X POST http://localhost:3000/api/ai/clear-cache
+```
+
+#### All Emails Categorized as "Spam"
+```bash
+# Check AI quota status
+curl http://localhost:3000/api/ai/rate-limit-status
+
+# If quota exceeded, wait for reset or upgrade API plan
+# If service unavailable, check Gemini API key
+
+# Test AI health
+curl http://localhost:3000/health
 ```
 
 ### Debug Mode
@@ -613,6 +879,7 @@ npm run dev
 - **Search Response**: <200ms for typical queries
 - **Reply Generation**: 2-5 seconds per email
 - **Memory Usage**: 200-500MB (depending on email volume)
+- **AI Quota**: 80 calls/day (conservative limit)
 
 ## 🤝 Contributing
 
@@ -637,7 +904,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - **Google** for powerful Gemini AI capabilities
-- **OpenAI** for embedding services
 - **Elastic** for excellent search functionality  
 - **Pinecone** for vector database services
 - **Slack** for notification integration
@@ -649,6 +915,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Issues**: Create an issue on GitHub
 - **Logs**: Check `logs/` directory for detailed information
 - **Health**: Use `/health` endpoint for system status
+- **AI Quota**: Monitor at `/api/ai/rate-limit-status`
 
 ---
 

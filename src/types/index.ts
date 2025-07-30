@@ -80,6 +80,9 @@ export interface ImapConfig {
     connTimeout: number;
     authTimeout: number;
     keepalive: boolean;
+    debug?: any;
+    autotls?: 'always' | 'required' | 'never';
+    auth?: string;
 }
 
 export interface ElasticsearchConfig {
@@ -89,10 +92,11 @@ export interface ElasticsearchConfig {
 }
 
 export interface GeminiConfig {
-  apiKey: string;
-  model: string;
-  temperature: number;
-  maxTokens: number;
+    apiKey: string;
+    embeddingApiKey: string; // Separate key for embeddings
+    model: string;
+    temperature: number;
+    maxTokens: number;
 }
 
 export interface SlackConfig {
@@ -196,41 +200,41 @@ export interface RAGContext {
 }
 
 export interface ReplyGeneration {
-  originalEmail: Email;
-  suggestedReply: string;
-  confidence: number;
-  contextUsed: RAGContext[];
-  generatedAt: Date;
+    originalEmail: Email;
+    suggestedReply: string;
+    confidence: number;
+    contextUsed: RAGContext[];
+    generatedAt: Date;
 }
 
 // Chat-related types
 export interface ChatMessage {
-  id: string;
-  role: 'user' | 'model';
-  content: string;
-  timestamp: Date;
-  emailContext?: string[]; // Email IDs for context
+    id: string;
+    role: 'user' | 'model';
+    content: string;
+    timestamp: Date;
+    emailContext?: string[]; // Email IDs for context
 }
 
 export interface ChatSession {
-  id: string;
-  userId?: string;
-  messages: ChatMessage[];
-  createdAt: Date;
-  updatedAt: Date;
-  emailContext: string[]; // Email IDs that are part of this chat context
+    id: string;
+    userId?: string;
+    messages: ChatMessage[];
+    createdAt: Date;
+    updatedAt: Date;
+    emailContext: string[]; // Email IDs that are part of this chat context
 }
 
 export interface ChatRequest {
-  sessionId?: string;
-  message: string;
-  emailIds?: string[]; // Optional email IDs to include in context
+    sessionId?: string;
+    message: string;
+    emailIds?: string[]; // Optional email IDs to include in context
 }
 
 export interface ChatResponse {
-  sessionId: string;
-  message: ChatMessage;
-  suggestedActions?: string[];
+    sessionId: string;
+    message: ChatMessage;
+    suggestedActions?: string[];
 }
 
 // Service Event Types

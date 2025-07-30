@@ -1,6 +1,7 @@
 import { RAGContext, Email, PineconeConfig } from '../types';
 interface EmbeddingConfig {
     apiKey: string;
+    model?: string;
 }
 interface VectorSearchResult {
     id: string;
@@ -9,7 +10,7 @@ interface VectorSearchResult {
 }
 export declare class VectorService {
     private pinecone;
-    private openai;
+    private gemini;
     private indexName;
     private embeddingCache;
     private isInitialized;
@@ -90,6 +91,10 @@ export declare class VectorService {
      */
     private hashText;
     private delay;
+    /**
+     * Pad or truncate embedding to match the required dimension
+     */
+    private padEmbeddingToDimension;
 }
 export {};
 //# sourceMappingURL=VectorService.d.ts.map

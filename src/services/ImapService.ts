@@ -54,8 +54,13 @@ export class ImapService extends EventEmitter {
                     servername: account.host
                 },
                 connTimeout: 60000,
-                authTimeout: 10000,
-                keepalive: true
+                authTimeout: 30000, // Increased timeout for Outlook
+                keepalive: true,
+                // Additional options for Outlook compatibility
+                debug: process.env.NODE_ENV === 'development' ? console.log : undefined,
+                // Try different authentication methods
+                autotls: 'always',
+                auth: 'PLAIN'
             };
 
             this.configs.set(account.id, config);
@@ -109,6 +114,20 @@ export class ImapService extends EventEmitter {
             imap.once('error', (error: Error) => {
                 emailLogger.imapError(account.label, error);
 
+                // Provide specific guidance for common Outlook issues
+                if (error.message.includes('LOGIN failed') || error.message.includes('AUTHENTICATE')) {
+                    logger.error(`❌ Outlook authentication failed for ${account.label}. Possible solutions:`);
+                    logger.error('   1. Enable 2-factor authentication on your Outlook account');
+                    logger.error('   2. Generate an "App Password" from Microsoft Account settings');
+                    logger.error('   3. Use the App Password instead of your regular password');
+                    logger.error('   4. Ensure IMAP is enabled in Outlook settings');
+                } else if (error.message.includes('ECONNREFUSED') || error.message.includes('ENOTFOUND')) {
+                    logger.error(`❌ Connection failed for ${account.label}. Check:`);
+                    logger.error('   1. Internet connection');
+                    logger.error('   2. Firewall settings');
+                    logger.error('   3. IMAP server settings');
+                }
+
                 if (!connectionEstablished) {
                     reject(error);
                 } else {
@@ -134,53 +153,86 @@ export class ImapService extends EventEmitter {
     /**
      * Perform initial email sync for last 30 days
      */
+    // src/services/ImapService.ts
+
     private async performInitialSync(accountId: string, imap: any): Promise<void> {
         const account = this.accounts.get(accountId)!;
         const startTime = Date.now();
 
         return new Promise((resolve, reject) => {
-            imap.openBox('INBOX', true, async (err: Error | null, _box: any) => {
+            imap.openBox('INBOX', true, (err: Error | null, _box: any) => {
                 if (err) {
-                    reject(err);
-                    return;
+                    return reject(err);
                 }
 
                 try {
-                    // Search for all emails (simplified to avoid IMAP date format issues)
-                    // We'll limit processing to recent emails in the processing logic
-                    imap.search(['ALL'], async (err: Error | null, results?: number[]) => {
-                        if (err) {
-                            reject(err);
+                    const sinceDate = new Date();
+                    sinceDate.setDate(sinceDate.getDate() - this.HISTORY_DAYS);
+                    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                    const imapDateString = `${sinceDate.getDate()}-${months[sinceDate.getMonth()]}-${sinceDate.getFullYear()}`;
+                    const searchCriteria = [['SINCE', imapDateString]];
+
+                    imap.search(searchCriteria, (searchErr: Error | null, results?: number[]) => {
+                        if (searchErr) {
+                            logger.error(`❌ IMAP search with 'SINCE' failed for ${account.label}. Trying 'ALL' as fallback.`, searchErr);
+                            imap.search(['ALL'], (fallbackErr: Error | null, fallbackResults?: number[]) => {
+                                if (fallbackErr) {
+                                    return reject(fallbackErr);
+                                }
+                                this.processSearchResults(account, startTime, fallbackResults || [])
+                                    .then(resolve)
+                                    .catch(reject);
+                            });
                             return;
                         }
 
-                        if (!results || results.length === 0) {
-                            emailLogger.syncComplete(account.label, 0, Date.now() - startTime);
-                            resolve();
-                            return;
-                        }
-
-                        logger.info(`📧 Syncing ${results!.length} emails for ${account.label}`);
-
-                        // Process emails in batches to avoid memory issues
-                        const batchSize = 50;
-                        let processedCount = 0;
-
-                        for (let i = 0; i < results!.length; i += batchSize) {
-                            const batch = results!.slice(i, i + batchSize);
-                            await this.processBatchEmails(accountId, imap, batch);
-                            processedCount += batch.length;
-                        }
-
-                        emailLogger.syncComplete(account.label, processedCount, Date.now() - startTime);
-                        resolve();
+                        this.processSearchResults(account, startTime, results || [])
+                            .then(resolve)
+                            .catch(reject);
                     });
                 } catch (error) {
-                    reject(error);
+                    return reject(error);
                 }
             });
         });
     }
+
+    /**
+     * Helper to process search results and limit to 50
+     */
+    private async processSearchResults(account: EmailAccount, startTime: number, results: number[]): Promise<void> {
+        const accountId = account.id;
+        const imap = this.connections.get(accountId);
+
+        if (!imap) {
+            logger.warn(`⚠️ No active connection for ${account.label} during search processing.`);
+            return;
+        }
+
+        if (!results || results.length === 0) {
+            emailLogger.syncComplete(account.label, 0, Date.now() - startTime);
+            return;
+        }
+
+        // Take only the most recent 50 UIDs
+        const limitedResults = results.slice(-50);
+
+        logger.info(`📧 Found ${results.length} recent emails. Syncing a max of ${limitedResults.length} for ${account.label}.`);
+
+        const batchSize = 50;
+        let processedCount = 0;
+
+        for (let i = 0; i < limitedResults.length; i += batchSize) {
+            const batch = limitedResults.slice(i, i + batchSize);
+            await this.processBatchEmails(accountId, imap, batch);
+            processedCount += batch.length;
+        }
+
+        emailLogger.syncComplete(account.label, processedCount, Date.now() - startTime);
+    }
+
+
+
 
     /**
      * Process a batch of emails
@@ -254,15 +306,28 @@ export class ImapService extends EventEmitter {
                 // Set up IDLE mode
                 const startIdle = () => {
                     try {
-                        imap.idle((err: Error | null) => {
-                            if (err) {
-                                logger.error(`❌ IDLE error for ${account.label}:`, err);
-                                return;
-                            }
-                            logger.debug(`💤 IDLE started for ${account.label}`);
-                        });
+                        if (typeof imap.idle === 'function') {
+                            imap.idle((err: Error | null) => {
+                                if (err) {
+                                    logger.error(`❌ IDLE error for ${account.label}:`, err);
+                                    return;
+                                }
+                                logger.debug(`💤 IDLE started for ${account.label}`);
+                            });
+                        } else {
+                            logger.warn(`⚠️ IDLE not supported for ${account.label}, falling back to polling`);
+                            // Fallback to polling if IDLE is not supported
+                            setTimeout(() => {
+                                // Poll for new emails every 30 seconds
+                                this.pollForNewEmails(accountId, imap);
+                            }, 30000);
+                        }
                     } catch (error) {
                         logger.error(`❌ IDLE error for ${account.label}:`, error);
+                        // Fallback to polling
+                        setTimeout(() => {
+                            this.pollForNewEmails(accountId, imap);
+                        }, 30000);
                     }
                 };
 
@@ -271,11 +336,15 @@ export class ImapService extends EventEmitter {
                     logger.info(`📧 ${numNewMsgs} new email(s) detected for ${account.label}`);
 
                     // Stop IDLE to fetch new emails
-                    imap.idle((err: Error | null) => {
-                        if (err) {
-                            logger.error(`❌ IDLE stop error for ${account.label}:`, err);
-                        }
-                    });
+                    try {
+                        imap.idle((err: Error | null) => {
+                            if (err) {
+                                logger.error(`❌ IDLE stop error for ${account.label}:`, err);
+                            }
+                        });
+                    } catch (error) {
+                        logger.error(`❌ IDLE stop error for ${account.label}:`, error);
+                    }
 
                     try {
                         // Fetch the latest emails
@@ -581,6 +650,55 @@ export class ImapService extends EventEmitter {
 
         logger.info('✅ IMAP service shutdown complete');
     }
+
+    /**
+     * Poll for new emails (fallback when IDLE is not supported)
+     */
+    /**
+  * Poll for new emails (fallback when IDLE is not supported)
+  */
+    private async pollForNewEmails(accountId: string, imap: any): Promise<void> {
+        const account = this.accounts.get(accountId);
+        if (!account || this.isShuttingDown) return;
+
+        try {
+            // Use the same date-based search as the initial sync, but for UNSEEN emails
+            const sinceDate = new Date();
+            sinceDate.setDate(sinceDate.getDate() - this.HISTORY_DAYS);
+            const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            const imapDateString = `${sinceDate.getDate()}-${months[sinceDate.getMonth()]}-${sinceDate.getFullYear()}`;
+            const searchCriteria = ['UNSEEN', ['SINCE', imapDateString]];
+
+            imap.search(searchCriteria, async (err: Error | null, results?: number[]) => {
+                if (err) {
+                    logger.error(`❌ Poll search error for ${account.label}:`, err);
+                    if (!this.isShuttingDown) {
+                        setTimeout(() => this.pollForNewEmails(accountId, imap), 30000);
+                    }
+                    return;
+                }
+
+                if (results && results.length > 0) {
+                    logger.info(`📧 Found ${results.length} new unread email(s) via polling for ${account.label}`);
+                    // Limit polling results as well to be safe
+                    const limitedResults = results.slice(-50);
+                    await this.processBatchEmails(accountId, imap, limitedResults);
+                }
+
+                // Continue polling
+                if (!this.isShuttingDown) {
+                    setTimeout(() => this.pollForNewEmails(accountId, imap), 30000);
+                }
+            });
+        } catch (error) {
+            logger.error(`❌ Poll error for ${account.label}:`, error);
+            // Continue polling even on error
+            if (!this.isShuttingDown) {
+                setTimeout(() => this.pollForNewEmails(accountId, imap), 30000);
+            }
+        }
+    }
+
 
     /**
      * Health check for all connections

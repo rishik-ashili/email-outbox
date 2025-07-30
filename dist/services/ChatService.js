@@ -10,6 +10,9 @@ const uuid_1 = require("uuid");
 class ChatService {
     constructor(config, elasticsearchService) {
         this.sessions = new Map();
+        this.rateLimiter = { lastCall: 0, callCount: 0 };
+        this.RATE_LIMIT_PER_MINUTE = 1; // Reduced rate limit
+        this.RATE_LIMIT_WINDOW = 60000; // 1 minute in ms
         this.config = config;
         this.elasticsearchService = elasticsearchService;
         this.gemini = new GoogleGenerativeAI(config.apiKey);
@@ -44,16 +47,27 @@ class ChatService {
                 role: msg.role,
                 parts: [{ text: msg.content }]
             }));
+            // Enforce rate limiting before API call
+            await this.enforceRateLimit();
             // Create chat with Gemini
             const systemInstruction = this.buildSystemInstruction(emailContext);
+            // Use the configured model (gemini-2.5-pro)
+            let modelName = this.config.model;
             const model = this.gemini.getGenerativeModel({
-                model: this.config.model,
+                model: modelName,
                 systemInstruction: systemInstruction,
             });
             const chat = model.startChat({
                 history: chatHistory
             });
-            const result = await chat.sendMessage(request.message);
+            // Add timeout to prevent hanging
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Chat request timeout')), 15000); // 15 second timeout
+            });
+            const result = await Promise.race([
+                chat.sendMessage(request.message),
+                timeoutPromise
+            ]);
             const response = result.response;
             // Create assistant message
             const assistantMessage = {
@@ -245,8 +259,16 @@ Be helpful, concise, and professional. If you're unsure about something, say so 
     async healthCheck() {
         try {
             // Simple test to verify Gemini API is working
-            const model = this.gemini.getGenerativeModel({ model: this.config.model });
-            const result = await model.generateContent('Hello');
+            let modelName = this.config.model;
+            const model = this.gemini.getGenerativeModel({ model: modelName });
+            // Add timeout to prevent hanging
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Chat health check timeout')), 5000); // 5 second timeout
+            });
+            const result = await Promise.race([
+                model.generateContent('Hello'),
+                timeoutPromise
+            ]);
             const response = await result.response;
             return !!response.text();
         }
@@ -254,6 +276,26 @@ Be helpful, concise, and professional. If you're unsure about something, say so 
             logger_1.default.error('❌ Chat service health check failed:', error);
             return false;
         }
+    }
+    /**
+     * Rate limiting to prevent API quota exhaustion
+     */
+    async enforceRateLimit() {
+        const now = Date.now();
+        // Reset counter if window has passed
+        if (now - this.rateLimiter.lastCall > this.RATE_LIMIT_WINDOW) {
+            this.rateLimiter.callCount = 0;
+            this.rateLimiter.lastCall = now;
+        }
+        // Check if we're at the limit
+        if (this.rateLimiter.callCount >= this.RATE_LIMIT_PER_MINUTE) {
+            const waitTime = this.RATE_LIMIT_WINDOW - (now - this.rateLimiter.lastCall);
+            logger_1.default.warn(`⚠️ Chat rate limit reached, waiting ${waitTime}ms before next API call`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            this.rateLimiter.callCount = 0;
+            this.rateLimiter.lastCall = Date.now();
+        }
+        this.rateLimiter.callCount++;
     }
     /**
      * Start automatic cleanup of old sessions

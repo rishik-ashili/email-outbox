@@ -74,6 +74,10 @@ export declare class ImapService extends EventEmitter {
      */
     shutdown(): Promise<void>;
     /**
+     * Poll for new emails (fallback when IDLE is not supported)
+     */
+    private pollForNewEmails;
+    /**
      * Health check for all connections
      */
     healthCheck(): Promise<Map<string, boolean>>;

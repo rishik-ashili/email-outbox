@@ -32,30 +32,25 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.VectorService = void 0;
 const pinecone_1 = require("@pinecone-database/pinecone");
-const openai_1 = __importDefault(require("openai"));
+const generative_ai_1 = require("@google/generative-ai");
 const logger_1 = __importStar(require("../utils/logger"));
 const uuid_1 = require("uuid");
 class VectorService {
     constructor(pineconeConfig, embeddingConfig) {
         this.embeddingCache = {};
         this.isInitialized = false;
-        this.EMBEDDING_MODEL = 'text-embedding-ada-002';
-        this.VECTOR_DIMENSION = 1024; // Match Pinecone index dimension
+        this.EMBEDDING_MODEL = 'gemini-embedding-001'; // Correct Gemini embedding model
+        this.VECTOR_DIMENSION = 1024; // Match your existing Pinecone index dimension
         this.TOP_K_RESULTS = 5; // Number of similar contexts to retrieve
         this.pinecone = new pinecone_1.Pinecone({
             apiKey: pineconeConfig.apiKey
         });
-        this.openai = new openai_1.default({
-            apiKey: embeddingConfig.apiKey,
-        });
+        this.gemini = new generative_ai_1.GoogleGenerativeAI(embeddingConfig.apiKey);
         this.indexName = pineconeConfig.index;
-        logger_1.default.info('🧠 Vector service initialized (using OpenAI for embeddings only)');
+        logger_1.default.info('🧠 Vector service initialized (using separate embedding API key)');
     }
     /**
      * Initialize Pinecone index and seed with default contexts
@@ -228,11 +223,10 @@ class VectorService {
             return this.embeddingCache[cacheKey];
         }
         try {
-            const response = await this.openai.embeddings.create({
-                model: this.EMBEDDING_MODEL,
-                input: text.replace(/\n/g, ' ').trim()
-            });
-            const embedding = response.data[0].embedding;
+            // Use the correct Gemini embedding API with specific dimension
+            const model = this.gemini.getGenerativeModel({ model: this.EMBEDDING_MODEL });
+            const result = await model.embedContent(text.replace(/\n/g, ' ').trim());
+            const embedding = result.embedding.values;
             // Cache the embedding
             this.embeddingCache[cacheKey] = embedding;
             return embedding;
@@ -539,6 +533,24 @@ class VectorService {
     }
     delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+    /**
+     * Pad or truncate embedding to match the required dimension
+     */
+    padEmbeddingToDimension(embedding, targetDimension) {
+        if (embedding.length === targetDimension) {
+            return embedding;
+        }
+        if (embedding.length > targetDimension) {
+            // Truncate if embedding is larger than target
+            return embedding.slice(0, targetDimension);
+        }
+        // Pad with zeros if embedding is smaller than target
+        const padded = [...embedding];
+        while (padded.length < targetDimension) {
+            padded.push(0);
+        }
+        return padded;
     }
 }
 exports.VectorService = VectorService;

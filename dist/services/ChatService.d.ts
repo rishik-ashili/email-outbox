@@ -5,6 +5,9 @@ export declare class ChatService {
     private config;
     private elasticsearchService;
     private sessions;
+    private rateLimiter;
+    private readonly RATE_LIMIT_PER_MINUTE;
+    private readonly RATE_LIMIT_WINDOW;
     constructor(config: GeminiConfig, elasticsearchService: ElasticsearchService);
     /**
      * Start or continue a chat session
@@ -54,6 +57,10 @@ export declare class ChatService {
      * Health check for chat service
      */
     healthCheck(): Promise<boolean>;
+    /**
+     * Rate limiting to prevent API quota exhaustion
+     */
+    private enforceRateLimit;
     /**
      * Start automatic cleanup of old sessions
      */

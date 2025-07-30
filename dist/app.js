@@ -121,18 +121,20 @@ class EmailOneboxApp {
             };
             // Gemini AI configuration
             const geminiConfig = {
-                apiKey: process.env.GEMINI_API_KEY,
-                model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+                apiKey: process.env.GEMINI_API_KEY, // For chat and classification
+                embeddingApiKey: process.env.GEMINI_EMBEDDING_API_KEY, // For embeddings only
+                model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
                 temperature: parseFloat(process.env.GEMINI_TEMPERATURE || '0'),
                 maxTokens: parseInt(process.env.GEMINI_MAX_TOKENS || '1000')
             };
-            // OpenAI configuration (for embeddings only)
+            // Gemini configuration (for embeddings)
             const embeddingConfig = {
-                apiKey: process.env.OPENAI_API_KEY
+                apiKey: process.env.GEMINI_EMBEDDING_API_KEY, // Separate key for embeddings
+                model: 'gemini-embedding-001'
             };
             // AI processing configuration
             const aiProcessingConfig = {
-                categorizationEnabled: process.env.AI_CATEGORIZATION_ENABLED !== 'false',
+                categorizationEnabled: false, // Temporarily disabled due to quota limits
                 replySuggestionsEnabled: process.env.AI_REPLY_SUGGESTIONS_ENABLED !== 'false',
                 batchSize: parseInt(process.env.AI_BATCH_SIZE || '10'),
                 retryAttempts: parseInt(process.env.AI_RETRY_ATTEMPTS || '3')
@@ -342,6 +344,8 @@ class EmailOneboxApp {
                 const notificationStats = this.notificationService.getNotificationStats();
                 const imapStatus = this.imapService.getConnectionStatus();
                 const chatStats = this.chatService.getStats();
+                const aiQuotaStatus = this.aiService.getDailyQuotaStatus();
+                const aiRateLimitStatus = this.aiService.getRateLimitStatus();
                 res.json({
                     success: true,
                     data: {
@@ -349,7 +353,12 @@ class EmailOneboxApp {
                         vector: vectorStats,
                         notifications: notificationStats,
                         connections: Object.fromEntries(imapStatus),
-                        chat: chatStats
+                        chat: chatStats,
+                        ai: {
+                            quota: aiQuotaStatus,
+                            rateLimit: aiRateLimitStatus,
+                            categorizationEnabled: this.aiService.getConfig().processing.categorizationEnabled
+                        }
                     },
                     timestamp: new Date().toISOString()
                 });
@@ -444,6 +453,83 @@ class EmailOneboxApp {
                 return res.json({
                     success: true,
                     data: email,
+                    timestamp: new Date().toISOString()
+                });
+            }
+            catch (error) {
+                return res.status(500).json({
+                    success: false,
+                    error: error instanceof Error ? error.message : 'Unknown error',
+                    timestamp: new Date().toISOString()
+                });
+            }
+        });
+        this.app.post('/api/ai/disable-categorization', async (req, res) => {
+            try {
+                this.aiService.disableCategorization();
+                return res.json({
+                    success: true,
+                    message: 'AI categorization disabled',
+                    timestamp: new Date().toISOString()
+                });
+            }
+            catch (error) {
+                return res.status(500).json({
+                    success: false,
+                    error: error instanceof Error ? error.message : 'Unknown error',
+                    timestamp: new Date().toISOString()
+                });
+            }
+        });
+        this.app.post('/api/ai/enable-categorization', async (req, res) => {
+            try {
+                this.aiService.enableCategorization();
+                return res.json({
+                    success: true,
+                    message: 'AI categorization enabled',
+                    timestamp: new Date().toISOString()
+                });
+            }
+            catch (error) {
+                return res.status(500).json({
+                    success: false,
+                    error: error instanceof Error ? error.message : 'Unknown error',
+                    timestamp: new Date().toISOString()
+                });
+            }
+        });
+        // Get AI rate limit status
+        this.app.get('/api/ai/rate-limit-status', async (req, res) => {
+            try {
+                const quotaStatus = this.aiService.getDailyQuotaStatus();
+                const rateLimitStatus = this.aiService.getRateLimitStatus();
+                const config = this.aiService.getConfig();
+                return res.json({
+                    success: true,
+                    data: {
+                        quota: quotaStatus,
+                        rateLimit: rateLimitStatus,
+                        categorizationEnabled: config.processing.categorizationEnabled,
+                        model: config.gemini.model
+                    },
+                    timestamp: new Date().toISOString()
+                });
+            }
+            catch (error) {
+                return res.status(500).json({
+                    success: false,
+                    error: error instanceof Error ? error.message : 'Unknown error',
+                    timestamp: new Date().toISOString()
+                });
+            }
+        });
+        // Clear AI cache
+        this.app.post('/api/ai/clear-cache', async (req, res) => {
+            try {
+                this.aiService.clearCache();
+                return res.json({
+                    success: true,
+                    message: 'AI service cache cleared',
                     timestamp: new Date().toISOString()
                 });
             }
@@ -798,9 +884,10 @@ class EmailOneboxApp {
             if (!user || !pass || !host) {
                 break; // No more accounts
             }
-            // Skip Yahoo accounts to avoid connection issues
-            if (host.includes('yahoo.com') || host.includes('yahoo')) {
-                logger_1.default.info(`⏭️ Skipping Yahoo account: ${user} (to avoid connection issues)`);
+            // Skip Yahoo and Outlook accounts to avoid connection issues
+            if (host.includes('yahoo.com') || host.includes('yahoo') ||
+                host.includes('outlook.com') || host.includes('outlook')) {
+                logger_1.default.info(`⏭️ Skipping Yahoo/Outlook account: ${user} (to avoid connection issues)`);
                 accountIndex++;
                 continue;
             }
