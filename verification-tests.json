@@ -1,0 +1,14 @@
+{
+    "test_vector_search": {
+        "message": "Show me all emails about meetings and schedules"
+    },
+    "test_categorization": {
+        "message": "How many interested leads do I have?"
+    },
+    "test_email_analysis": {
+        "message": "Analyze the sentiment of my recent emails"
+    },
+    "test_rag_context": {
+        "message": "What should I reply to partnership emails?"
+    }
+}

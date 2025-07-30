@@ -1,0 +1,7 @@
+{
+    "label": "Test Gmail",
+    "user": "test@gmail.com",
+    "password": "your-app-password",
+    "host": "imap.gmail.com",
+    "port": 993
+}

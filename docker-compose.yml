@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch
+    environment:
+      # Single node setup for development
+      - discovery.type=single-node
+      # Disable security for easier development setup
+      - xpack.security.enabled=false
+      # JVM heap size - adjust based on your system
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      # Enable monitoring
+      - xpack.monitoring.collection.enabled=true
+      # Cluster settings
+      - cluster.name=email-onebox-cluster
+      - node.name=email-onebox-node
+      # Network settings
+      - network.host=0.0.0.0
+      - http.port=9200
+      # Index settings
+      - action.auto_create_index=true
+      - indices.memory.index_buffer_size=10%
+    ports:
+      - "9200:9200"  # Elasticsearch HTTP
+      - "9300:9300"  # Elasticsearch transport
+    volumes:
+      # Persist Elasticsearch data
+      - es_data:/usr/share/elasticsearch/data
+      # Custom configuration if needed
+      - ./elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+    networks:
+      - elastic
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 512m
+
+  # Optional: Kibana for Elasticsearch visualization and debugging
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - SERVER_NAME=kibana
+      - SERVER_HOST=0.0.0.0
+      - xpack.security.enabled=false
+    ports:
+      - "5601:5601"
+    volumes:
+      - kibana_data:/usr/share/kibana/data
+    networks:
+      - elastic
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - debug  # Only start Kibana when using --profile debug
+
+networks:
+  elastic:
+    driver: bridge
+    name: email-onebox-network
+
+volumes:
+  es_data:
+    driver: local
+    name: elasticsearch-data
+  kibana_data:
+    driver: local
+    name: kibana-data 

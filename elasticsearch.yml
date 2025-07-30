@@ -1,0 +1,43 @@
+# Elasticsearch 8.11.0 Configuration for Email Onebox
+# =====================================================
+
+# Cluster Configuration
+cluster.name: email-onebox-cluster
+node.name: email-onebox-node
+
+# Network Configuration
+network.host: 0.0.0.0
+http.port: 9200
+transport.port: 9300
+
+# Discovery Configuration
+discovery.type: single-node
+
+# Security Configuration (disabled for development)
+xpack.security.enabled: false
+xpack.security.transport.ssl.enabled: false
+xpack.security.http.ssl.enabled: false
+
+# Search Configuration
+search.max_buckets: 100000
+
+# Thread Pool Configuration (Updated for ES 8.x)
+thread_pool.write.size: 4
+thread_pool.write.queue_size: 1000
+thread_pool.search.size: 8
+thread_pool.search.queue_size: 1000
+
+# JVM Configuration
+bootstrap.memory_lock: false
+
+# Logging Configuration
+logger.root: INFO
+logger.org.elasticsearch.discovery: INFO
+logger.org.elasticsearch.cluster.service: INFO
+
+# Performance Configuration
+indices.memory.index_buffer_size: 20%
+indices.memory.min_index_buffer_size: 48mb
+
+# Monitoring Configuration (Updated for ES 8.x)
+xpack.monitoring.collection.enabled: false 
