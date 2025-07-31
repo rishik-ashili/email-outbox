@@ -184,6 +184,15 @@ NODE_ENV=development
 ELASTICSEARCH_URL=http://localhost:9200
 LOG_LEVEL=info
 ```
+#### Delete local cache 
+```env
+curl -X DELETE "http://localhost:9200/emails"
+```
+
+#### In case of existing node running 
+```env
+taskkill /F /IM node.exe
+```
 
 ### Email Categories
 
@@ -399,6 +408,36 @@ GET /api/chat/stats
 - "Help me draft a reply to the meeting request"
 - "Which emails need urgent attention?"
 - "Find all emails about the project proposal"
+
+#### How to Configure Slack Notifications
+
+You need a "Bot Token" from a Slack App.
+
+**Step 1: Create a Slack App and Get Your Bot Token**
+
+1.  Go to the [Slack API Apps page](https://api.slack.com/apps) and click **"Create New App"**.
+2.  Choose **"From scratch"**.
+3.  Give your app a name (e.g., "Email Onebox Notifier") and select your workspace. Click **"Create App"**.
+4.  You'll be taken to the app's settings. In the left sidebar, click on **"OAuth & Permissions"**.
+5.  Scroll down to the **"Scopes"** section. Under "Bot Token Scopes," click **"Add an OAuth Scope"**.
+6.  Add the `chat:write` permission. This allows the bot to post messages.
+7.  Scroll back up to the top of the page and click **"Install to Workspace"**.
+8.  Click **"Allow"** on the authorization screen.
+9.  You will now see a **"Bot User OAuth Token"** that starts with `xoxb-`. **This is the token you need.** Copy it.
+
+**Step 2: Add the Bot to Your Slack Channel**
+
+1.  Open your Slack workspace.
+2.  Go to the channel you want notifications in (e.g., `#general`).
+3.  Type `/invite @[Your Bot Name]` (e.g., `/invite @Email Onebox Notifier`) and send the message. This gives the bot permission to post in that channel.
+
+**Step 3: Update Your `.env` File**
+
+Open your `.env` file and update the Slack section with the token you copied and the channel name.
+
+```env
+# .env
+
 
 ## 🧪 Testing & Verification
 

@@ -17,26 +17,32 @@ export class AIService {
     private rateLimiter: { lastCall: number; callCount: number } = { lastCall: 0, callCount: 0 };
     private categoryCache: Map<string, EmailCategory> = new Map();
     private dailyQuotaTracker: { date: string; calls: number } = { date: '', calls: 0 };
-    private readonly RATE_LIMIT_PER_MINUTE = 0.5; // Reduced to 1 request per 2 minutes for free tier
-    private readonly RATE_LIMIT_WINDOW = 60000; // 1 minute in ms
-    private readonly DAILY_QUOTA_LIMIT = 40; // Reduced limit for gemini-1.5-flash (50 - 10 buffer)
-    private readonly HEALTH_CHECK_INTERVAL = 600000; // 10 minutes (reduced health checks)
+    private readonly RATE_LIMIT_PER_MINUTE = 0.5;
+    private readonly RATE_LIMIT_WINDOW = 60000; 
+    private readonly DAILY_QUOTA_LIMIT = 40; 
+    private readonly HEALTH_CHECK_INTERVAL = 600000; 
     private lastHealthCheck = 0;
     private healthCheckCache = false;
 
     // Exact categorization prompt as specified in blueprint
-    private readonly CATEGORIZATION_PROMPT = `
-Analyze this email and categorize it into EXACTLY one of these categories:
-- Interested: Shows genuine interest in product/service/opportunity
-- Meeting Booked: About scheduling/confirming meetings or calls
-- Not Interested: Explicit decline or disinterest
-- Spam: Promotional, suspicious, or irrelevant content
-- Out of Office: Auto-reply indicating unavailability
+    // src/services/AIService.ts
 
+    private readonly CATEGORIZATION_PROMPT = `
+You are a highly accurate email classification expert. Analyze the following email and categorize it into EXACTLY one of the following categories based on the user's primary intent. Your response must be ONLY the category name.
+
+Categories and their strict definitions:
+- Interested: The sender expresses a clear and positive interest in a product, service, or partnership. They are asking for more information, a demo, or next steps. This is for initial expressions of interest.
+- Meeting Booked: The primary purpose of the email is to schedule, confirm, reschedule, or cancel a specific meeting, call, or appointment. Look for dates, times, calendar links, or confirmation language.
+- Not Interested: The sender explicitly states they are not interested, are declining an offer, or that it's not a good time.
+- Spam: The email is unsolicited marketing, a newsletter, a promotional offer, a suspicious link, or clearly irrelevant to business operations.
+- Out of Office: This is an automated reply indicating the person is unavailable, on vacation, or out of the office.
+
+---
 Email Subject: {subject}
 Email Body: {body}
+---
 
-Respond with ONLY the category name, nothing else.
+Category:
   `.trim();
 
     // Reply generation prompt template
@@ -67,7 +73,6 @@ Reply:
 
         this.gemini = new GoogleGenerativeAI(config.apiKey);
 
-        // Initialize daily quota tracker
         this.resetDailyQuotaIfNeeded();
 
         logger.info('🤖 AI Service initialized with Gemini');
@@ -269,7 +274,6 @@ Reply:
             throw new Error('Reply suggestions are disabled');
         }
 
-        // Check daily quota before making API call
         if (this.isDailyQuotaExceeded()) {
             throw new Error('Daily quota exceeded for reply generation');
         }
@@ -277,36 +281,45 @@ Reply:
         const startTime = Date.now();
 
         try {
-            // Prepare context string from relevant contexts
             const contextString = relevantContexts
                 .map(ctx => `- ${ctx.content}`)
                 .join('\n');
 
-            // Prepare prompt with email and context
+           
+            let fromAddress: string;
+            if (Array.isArray(email.from)) {
+                // Handle the original array format
+                fromAddress = email.from.map(f => f.address).join(', ');
+            } else if (typeof email.from === 'string') {
+                // Handle the flattened string format from Elasticsearch
+                fromAddress = email.from;
+            } else {
+                // Fallback for unexpected formats
+                fromAddress = 'Unknown Sender';
+            }
+
+
             const prompt = this.REPLY_PROMPT
                 .replace('{subject}', email.subject || '(no subject)')
-                .replace('{from}', email.from.map(f => f.address).join(', '))
+                .replace('{from}', fromAddress) // Use the safely determined fromAddress
                 .replace('{body}', this.sanitizeEmailBody(email.body))
                 .replace('{context}', contextString || 'No specific context available');
 
-            // Call Gemini API for reply generation
+            
             const response = await this.gemini.getGenerativeModel({ model: this.config.model }).generateContent({
-                contents: prompt,
-                config: {
-                    systemInstruction: 'You are a professional email assistant. Generate helpful, concise, and personalized email replies.',
-                    temperature: 0.7, // Slightly higher temperature for more natural replies
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                generationConfig: {
+                    temperature: 0.7, 
                     maxOutputTokens: this.config.maxTokens,
+                },
+                systemInstruction: {
+                    parts: [{ text: 'You are a professional email assistant. Generate helpful, concise, and personalized email replies.' }]
                 }
             });
 
-            const suggestedReply = response.response?.text?.trim() || '';
-
-            // Calculate confidence based on context availability and response quality
+            const suggestedReply = response.response?.text()?.trim() || '';
             const confidence = this.calculateReplyConfidence(suggestedReply, relevantContexts);
-
-            // Increment daily quota counter
             this.incrementDailyQuota();
-
             const duration = Date.now() - startTime;
             emailLogger.aiProcessing('reply-generation', email.id, duration);
 
@@ -507,42 +520,37 @@ Sentiment:
      * Simple keyword-based categorization to reduce API calls
      */
     private simpleKeywordCategorization(email: Email): EmailCategory | null {
-        const text = `${email.subject} ${email.body}`.toLowerCase();
+        // Safely get subject and body, providing an empty string as a fallback.
+        const subject = (email.subject || '').toLowerCase();
+        const body = (email.body || '').toLowerCase();
+        const fromAddress = (email.from[0]?.address || '').toLowerCase();
 
-        // Spam indicators
-        const spamKeywords = [
-            'free', 'limited time', 'offer', 'discount', 'upgrade', 'premium', 'get access',
-            'blackbox', 'intercom', 'marketing', 'promotional', 'newsletter', 'subscribe',
-            'unsubscribe', 'click here', 'claim now', 'special offer', 'deal', 'sale',
-            'qwiklab', 'arcade', 'badge', 'earned', 'finished', 'verification'
-        ];
-
-        if (spamKeywords.some(keyword => text.includes(keyword))) {
-            return 'Spam';
-        }
-
-        // Out of Office indicators
-        const oooKeywords = ['out of office', 'vacation', 'away', 'unavailable', 'return on'];
-        if (oooKeywords.some(keyword => text.includes(keyword))) {
+        // Out of Office indicators (High Confidence)
+        const oooKeywords = ['out of office', 'auto-reply', 'autoreply', 'automatic reply', 'on vacation', 'i will be out of the office'];
+        if (oooKeywords.some(keyword => subject.includes(keyword) || body.startsWith(keyword))) {
             return 'Out of Office';
         }
 
-        // Meeting indicators
-        const meetingKeywords = ['meeting', 'call', 'schedule', 'appointment', 'zoom', 'calendar'];
-        if (meetingKeywords.some(keyword => text.includes(keyword))) {
+        // Meeting indicators (High Confidence)
+        const meetingKeywords = ['meeting confirmed', 'meeting request', 'invitation:', 'zoom.us/j/', 'calendar invite', 'scheduled:', 'confirmed:'];
+        if (meetingKeywords.some(keyword => subject.includes(keyword) || body.includes(keyword))) {
             return 'Meeting Booked';
         }
 
-        // Not interested indicators
-        const notInterestedKeywords = ['not interested', 'decline', 'unfortunately', 'not looking'];
-        if (notInterestedKeywords.some(keyword => text.includes(keyword))) {
+        // Not Interested indicators (High Confidence)
+        const notInterestedKeywords = ['not interested', 'no longer interested', 'not a good fit', 'not looking for', 'decline your invitation'];
+        if (notInterestedKeywords.some(keyword => subject.includes(keyword) || body.includes(keyword))) {
             return 'Not Interested';
         }
 
-        // Interested indicators
-        const interestedKeywords = ['interested', 'partnership', 'collaboration', 'discuss', 'proposal'];
-        if (interestedKeywords.some(keyword => text.includes(keyword))) {
-            return 'Interested';
+        // Spam indicators (More specific to promotional content)
+        const spamKeywords = [
+            'unsubscribe', 'view in browser', 'no-reply@', 'noreply@', 'marketing',
+            'newsletter', 'promotion', 'special offer', 'limited time deal',
+            'blackbox.ai', 'qwiklab', 'the arcade', 'google cloud skills boost', 'canva'
+        ];
+        if (spamKeywords.some(keyword => subject.includes(keyword) || body.includes(keyword) || fromAddress.includes(keyword))) {
+            return 'Spam';
         }
 
         return null; // Let AI handle complex cases

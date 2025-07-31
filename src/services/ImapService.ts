@@ -60,7 +60,6 @@ export class ImapService extends EventEmitter {
                 debug: process.env.NODE_ENV === 'development' ? console.log : undefined,
                 // Try different authentication methods
                 autotls: 'always',
-                auth: 'PLAIN'
             };
 
             this.configs.set(account.id, config);
@@ -160,30 +159,34 @@ export class ImapService extends EventEmitter {
         const startTime = Date.now();
 
         return new Promise((resolve, reject) => {
-            imap.openBox('INBOX', true, (err: Error | null, _box: any) => {
+            imap.openBox('INBOX', false, (err: Error | null, _box: any) => {
                 if (err) {
+                    logger.error(`❌ Failed to open INBOX for ${account.label}:`, err);
                     return reject(err);
                 }
 
                 try {
+                    // Calculate the date 30 days ago
                     const sinceDate = new Date();
                     sinceDate.setDate(sinceDate.getDate() - this.HISTORY_DAYS);
-                    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-                    const imapDateString = `${sinceDate.getDate()}-${months[sinceDate.getMonth()]}-${sinceDate.getFullYear()}`;
+
+                    // Format the date for the IMAP SINCE command (e.g., "1-Jan-2023")
+                    const imapDateString = `${sinceDate.getDate()}-${sinceDate.toLocaleString('default', { month: 'short' })}-${sinceDate.getFullYear()}`;
+
+                    logger.info(`🔍 Searching for emails since ${imapDateString} for account ${account.label}`);
+
                     const searchCriteria = [['SINCE', imapDateString]];
 
                     imap.search(searchCriteria, (searchErr: Error | null, results?: number[]) => {
                         if (searchErr) {
-                            logger.error(`❌ IMAP search with 'SINCE' failed for ${account.label}. Trying 'ALL' as fallback.`, searchErr);
-                            imap.search(['ALL'], (fallbackErr: Error | null, fallbackResults?: number[]) => {
-                                if (fallbackErr) {
-                                    return reject(fallbackErr);
-                                }
-                                this.processSearchResults(account, startTime, fallbackResults || [])
-                                    .then(resolve)
-                                    .catch(reject);
-                            });
-                            return;
+                            logger.error(`❌ IMAP search failed for ${account.label}.`, searchErr);
+                            return reject(searchErr);
+                        }
+
+                        if (!results || results.length === 0) {
+                            logger.info(`✅ No new emails found since ${imapDateString} for ${account.label}.`);
+                            emailLogger.syncComplete(account.label, 0, Date.now() - startTime);
+                            return resolve();
                         }
 
                         this.processSearchResults(account, startTime, results || [])
@@ -191,12 +194,12 @@ export class ImapService extends EventEmitter {
                             .catch(reject);
                     });
                 } catch (error) {
+                    logger.error(`❌ An unexpected error occurred during initial sync for ${account.label}:`, error);
                     return reject(error);
                 }
             });
         });
     }
-
     /**
      * Helper to process search results and limit to 50
      */
@@ -231,7 +234,27 @@ export class ImapService extends EventEmitter {
         emailLogger.syncComplete(account.label, processedCount, Date.now() - startTime);
     }
 
+    /**
+    * Marks a batch of emails as seen on the IMAP server.
+    */
+    private markEmailsAsSeen(accountId: string, uids: number[]): void {
+        const connection = this.connections.get(accountId);
+        if (!connection || uids.length === 0) {
+            return;
+        }
 
+        try {
+            connection.addFlags(uids, ['\\Seen'], (err: Error | null) => {
+                if (err) {
+                    logger.error(`❌ Failed to mark emails as seen for account ${accountId}:`, err);
+                    return;
+                }
+                logger.debug(`✅ Marked ${uids.length} emails as seen for account ${accountId}.`);
+            });
+        } catch (error) {
+            logger.error(`❌ Error calling addFlags for account ${accountId}:`, error);
+        }
+    }
 
 
     /**
@@ -239,14 +262,17 @@ export class ImapService extends EventEmitter {
      */
     private async processBatchEmails(accountId: string, imap: any, uids: number[]): Promise<void> {
         return new Promise((resolve, reject) => {
+            if (!uids || uids.length === 0) {
+                return resolve();
+            }
+
             const fetch = imap.fetch(uids, {
                 bodies: '',
-                markSeen: false,
+                markSeen: false, // We will manually mark them as seen later
                 struct: true
             });
 
             const emails: Email[] = [];
-            let fetchedCount = 0;
 
             fetch.on('message', (msg: any) => {
                 let buffer = '';
@@ -268,21 +294,36 @@ export class ImapService extends EventEmitter {
                         if (email) {
                             emails.push(email);
                         }
-                        fetchedCount++;
                     } catch (error) {
                         logger.error('❌ Failed to parse email:', error);
-                        fetchedCount++;
                     }
                 });
             });
 
-            fetch.once('error', reject);
+            fetch.once('error', (err: Error) => {
+                logger.error(`❌ Failed to fetch emails for account ${this.accounts.get(accountId)?.label}:`, err);
+                reject(err);
+            });
 
             fetch.once('end', () => {
-                // Emit all emails from this batch
+                // =================================================================
+                // >> START: THIS IS THE CRITICAL FIX <<
+                // =================================================================
+
+                // After all messages in the batch are parsed, emit them one by one.
+                // This is the step that triggers the main application logic in app.ts.
+                logger.debug(`[${this.accounts.get(accountId)?.label}] Emitting ${emails.length} new email(s) for processing.`);
                 emails.forEach(email => {
                     this.emit('newEmail', email);
                 });
+
+                // =================================================================
+                // >> END: CRITICAL FIX <<
+                // =================================================================
+
+                // After successfully fetching and emitting, mark them as seen.
+                this.markEmailsAsSeen(accountId, uids);
+
                 resolve();
             });
         });
@@ -294,94 +335,40 @@ export class ImapService extends EventEmitter {
     private async startIdleMonitoring(accountId: string, imap: any): Promise<void> {
         const account = this.accounts.get(accountId)!;
 
-        return new Promise((resolve, reject) => {
-            imap.openBox('INBOX', false, (err: Error | null, _box: any) => {
+        // This is the function that will be called to enter the IDLE state.
+        const enterIdle = () => {
+
+            logger.debug(`[${account.label}] Connection is open. Waiting for 'mail' events.`);
+        };
+
+        // Set up the listener for new mail. This listener will be permanent for the connection.
+        imap.on('mail', (numNewMsgs: number) => {
+            logger.info(`📧 ${numNewMsgs} new email(s) detected for account: ${account.label}`);
+
+            imap.search(['UNSEEN'], (err: Error | null, results?: number[]) => {
                 if (err) {
-                    reject(err);
+                    logger.error(`❌ Search for new mail failed for ${account.label}:`, err);
                     return;
                 }
 
-                logger.info(`🔄 Starting IDLE monitoring for ${account.label}`);
-
-                // Set up IDLE mode
-                const startIdle = () => {
-                    try {
-                        if (typeof imap.idle === 'function') {
-                            imap.idle((err: Error | null) => {
-                                if (err) {
-                                    logger.error(`❌ IDLE error for ${account.label}:`, err);
-                                    return;
-                                }
-                                logger.debug(`💤 IDLE started for ${account.label}`);
-                            });
-                        } else {
-                            logger.warn(`⚠️ IDLE not supported for ${account.label}, falling back to polling`);
-                            // Fallback to polling if IDLE is not supported
-                            setTimeout(() => {
-                                // Poll for new emails every 30 seconds
-                                this.pollForNewEmails(accountId, imap);
-                            }, 30000);
-                        }
-                    } catch (error) {
-                        logger.error(`❌ IDLE error for ${account.label}:`, error);
-                        // Fallback to polling
-                        setTimeout(() => {
-                            this.pollForNewEmails(accountId, imap);
-                        }, 30000);
-                    }
-                };
-
-                // Handle new emails in real-time
-                imap.on('mail', async (numNewMsgs: number) => {
-                    logger.info(`📧 ${numNewMsgs} new email(s) detected for ${account.label}`);
-
-                    // Stop IDLE to fetch new emails
-                    try {
-                        imap.idle((err: Error | null) => {
-                            if (err) {
-                                logger.error(`❌ IDLE stop error for ${account.label}:`, err);
-                            }
-                        });
-                    } catch (error) {
-                        logger.error(`❌ IDLE stop error for ${account.label}:`, error);
-                    }
-
-                    try {
-                        // Fetch the latest emails
-                        const searchCriteria = ['UNSEEN'];
-                        imap.search(searchCriteria, async (err: Error | null, results?: number[]) => {
-                            if (err) {
-                                logger.error('❌ Search error:', err);
-                                startIdle(); // Resume IDLE
-                                return;
-                            }
-
-                            if (results && results.length > 0) {
-                                await this.processBatchEmails(accountId, imap, results);
-                            }
-
-                            // Resume IDLE monitoring
-                            startIdle();
-                        });
-                    } catch (error) {
-                        logger.error('❌ Failed to process new emails:', error);
-                        startIdle(); // Resume IDLE
-                    }
-                });
-
-                // Handle IDLE state changes
-                imap.on('idle', () => {
-                    logger.debug(`💤 IDLE mode active for ${account.label}`);
-                });
-
-                imap.on('update', (seqno: number, info: any) => {
-                    logger.debug(`📧 Email update for ${account.label}: ${seqno}`, info);
-                });
-
-                // Start IDLE monitoring
-                startIdle();
-                resolve();
+                if (results && results.length > 0) {
+                    logger.info(`[Real-time] Processing ${results.length} new unseen emails for ${account.label}.`);
+                    this.processBatchEmails(accountId, imap, results);
+                }
             });
+        });
+
+        // Open the INBOX in read-write mode to allow for flag changes.
+        imap.openBox('INBOX', false, (err: Error | null, _box: any) => {
+            if (err) {
+                logger.error(`❌ Failed to open INBOX for real-time monitoring on ${account.label}:`, err);
+                logger.warn(`⚠️ Falling back to polling for ${account.label} due to openBox error.`);
+                setTimeout(() => this.pollForNewEmails(accountId, imap), 30000);
+                return;
+            }
+            logger.info(`✅ Real-time monitoring enabled for ${account.label}. Waiting for new mail events.`);
+            // After opening the box, the 'mail' listener is now active. We don't need to do anything else.
+            enterIdle();
         });
     }
 
