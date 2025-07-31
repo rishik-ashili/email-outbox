@@ -1,4 +1,5 @@
 
+
 # Email Onebox System 📧
 
 A feature-rich email aggregation system that synchronizes multiple IMAP accounts in real-time, provides AI-powered email categorization, and includes advanced features like suggested replies using RAG (Retrieval-Augmented Generation).
@@ -10,6 +11,7 @@ A feature-rich email aggregation system that synchronizes multiple IMAP accounts
 - [Features](#-features)
 - [Architecture](#️-architecture)
 - [Quick Start](#-quick-start)
+- [Frontend UI Setup](#-frontend-ui-setup)
 - [Configuration](#-configuration)
 - [API Endpoints Guide](#-api-endpoints-guide)
 - [Task-Based Help (How to...)](#-task-based-help-how-to)
@@ -52,16 +54,18 @@ A feature-rich email aggregation system that synchronizes multiple IMAP accounts
 
 ## 🚀 Quick Start
 
+This guide is for setting up the **backend server**. For the UI, see the [Frontend UI Setup](#-frontend-ui-setup) section.
+
 ### Prerequisites
 
-- **Node.js** 18+ and npm
+- **Node.js 20.19+ or 22.12+** (LTS Recommended). Use [nvm](https://github.com/coreybutler/nvm-windows) to manage versions.
 - **Docker** and Docker Compose
 - **Gmail accounts** with app passwords
-- **Google Gemini API key** (from Google AI Studio)
-- **Pinecone account** (free tier available)
-- **Slack workspace** (optional, for notifications)
+- **Google Gemini API key**
+- **Pinecone account**
+- **Slack workspace** (optional)
 
-### 1. Clone and Install
+### 1. Clone and Install Backend
 
 ```bash
 git clone <repository-url>
@@ -79,33 +83,73 @@ docker-compose up -d elasticsearch
 curl http://localhost:9200
 ```
 
-### 3. Configure Environment
+### 3. Configure Backend Environment
 
 ```bash
 # Copy the environment template
 cp env.example .env
 
 # Edit the .env file with your credentials
-# Use a text editor like VS Code, nano, or vim
 nano .env
 ```
 
-### 4. Start the Application
+### 4. Start the Backend Application
 
 ```bash
 # Start in development mode with auto-reload
 npm run dev
-
-# Or, for production:
-npm run build
-npm start
 ```
+The backend server will be running on `http://localhost:3000`.
+
+## 🖥️ Frontend UI Setup
+
+This project includes a fully functional React UI. Run these commands in a **new, separate terminal**.
+
+### 1. Create the Frontend Project with Vite
+
+This command creates a `frontend` folder inside your `email-onebox` directory.
+
+```bash
+# From the root 'email-onebox' directory
+npm create vite@latest
+```
+When prompted:
+- **Project name:** `frontend`
+- **Select a framework:** `React`
+- **Select a variant:** `TypeScript + SWC`
+
+### 2. Install Frontend Dependencies
+
+```bash
+cd frontend
+npm install
+npm install axios
+npm install -D tailwindcss postcss autoprefixer
+```
+
+### 3. Initialize and Configure Tailwind CSS
+
+```bash
+# This creates tailwind.config.js and postcss.config.js
+npx tailwindcss init -p
+
+# Then, configure tailwind.config.js and src/index.css
+# (Refer to the provided source code for the correct configuration)
+```
+
+### 4. Start the Frontend Application
+
+```bash
+# Make sure your backend is already running on port 3000
+npm run dev
+```
+The frontend UI will be available at `http://localhost:5173`.
 
 ## 🔧 Configuration
 
 ### Core Environment Variables
 
-Fill these in your `.env` file.
+Fill these in your `.env` file for the backend server.
 
 #### Email Accounts (Gmail Recommended)
 
@@ -356,25 +400,18 @@ curl -X DELETE "http://localhost:9200/emails"
 ### Project Structure
 ```
 email-onebox/
-├── src/
-│   ├── services/  # Core business logic (ImapService, AIService, etc.)
-│   ├── types/     # TypeScript definitions
-│   ├── utils/     # Utilities (logger, etc.)
-│   └── app.ts     # Main Express application & API routes
-├── docker-compose.yml
+├── src/          # Backend source code
+├── frontend/     # Frontend source code
 └── ...
 ```
 
 ### Scripts
 ```bash
-# Start in development mode
+# Start backend dev server
 npm run dev
 
-# Build for production
-npm run build
-
-# Start in production
-npm start
+# Start frontend dev server (in 'frontend' directory)
+npm run dev
 ```
 
 ## 🚀 Deployment
@@ -384,9 +421,9 @@ Use a process manager like PM2 for production.
 # Install PM2 globally
 npm install -g pm2
 
-# Build the app
+# Build the backend app
 npm run build
 
 # Start with PM2
-pm2 start dist/app.js --name email-onebox
+pm2 start dist/app.js --name email-onebox-backend
 ```
