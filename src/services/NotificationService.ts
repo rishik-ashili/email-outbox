@@ -9,11 +9,6 @@ import {
 } from '../types';
 import logger, { emailLogger, circuitBreakerLogger } from '../utils/logger';
 
-// interface NotificationAttempt {
-//   timestamp: Date;
-//   success: boolean;
-//   error?: string;
-// }
 
 interface CircuitBreakerState {
     isOpen: boolean;
@@ -41,7 +36,6 @@ export class NotificationService {
     // Configuration constants
     private readonly CIRCUIT_BREAKER_THRESHOLD = 5;
     private readonly CIRCUIT_BREAKER_TIMEOUT = 60000; // 1 minute
-    // private readonly SLACK_RATE_LIMIT_DELAY = 1000; // 1 second between calls
 
     constructor(slackConfig: SlackConfig, webhookConfig: WebhookConfig) {
         this.slackConfig = slackConfig;

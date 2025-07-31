@@ -18,15 +18,13 @@ export class AIService {
     private categoryCache: Map<string, EmailCategory> = new Map();
     private dailyQuotaTracker: { date: string; calls: number } = { date: '', calls: 0 };
     private readonly RATE_LIMIT_PER_MINUTE = 0.5;
-    private readonly RATE_LIMIT_WINDOW = 60000; 
-    private readonly DAILY_QUOTA_LIMIT = 40; 
-    private readonly HEALTH_CHECK_INTERVAL = 600000; 
+    private readonly RATE_LIMIT_WINDOW = 60000;
+    private readonly DAILY_QUOTA_LIMIT = 40;
+    private readonly HEALTH_CHECK_INTERVAL = 600000;
     private lastHealthCheck = 0;
     private healthCheckCache = false;
 
-    // Exact categorization prompt as specified in blueprint
-    // src/services/AIService.ts
-
+    // This prompt tells the AI how to categorize emails into specific categories
     private readonly CATEGORIZATION_PROMPT = `
 You are a highly accurate email classification expert. Analyze the following email and categorize it into EXACTLY one of the following categories based on the user's primary intent. Your response must be ONLY the category name.
 
@@ -45,7 +43,7 @@ Email Body: {body}
 Category:
   `.trim();
 
-    // Reply generation prompt template
+    // This prompt helps generate reply suggestions based on email content and context
     private readonly REPLY_PROMPT = `
 Based on the following email and relevant context, generate a professional, personalized reply:
 
@@ -79,15 +77,16 @@ Reply:
     }
 
     /**
-     * Categorize email using AI with intelligent caching and quota management
+     * Categorizes an email using AI, with smart caching and quota management to avoid excessive API calls
      */
     async categorizeEmail(email: Email): Promise<EmailCategory> {
+        // If AI categorization is turned off, return default category
         if (!this.processingConfig.categorizationEnabled) {
             logger.debug('AI categorization is disabled, returning default category');
             return 'Spam';
         }
 
-        // Check cache first to avoid unnecessary API calls
+        // Check if we already categorized this email before (saves API calls)
         const cacheKey = this.generateCacheKey(email);
         if (this.categoryCache.has(cacheKey)) {
             const cachedCategory = this.categoryCache.get(cacheKey)!;
@@ -95,7 +94,7 @@ Reply:
             return cachedCategory;
         }
 
-        // Simple keyword-based categorization for common patterns to reduce API calls
+        // Try simple keyword matching first to avoid unnecessary AI calls
         const simpleCategory = this.simpleKeywordCategorization(email);
         if (simpleCategory) {
             logger.debug(`🏷️ Using keyword-based categorization for email: ${email.subject} -> ${simpleCategory}`);
@@ -103,13 +102,13 @@ Reply:
             return simpleCategory;
         }
 
-        // Check daily quota before making API call
+        // Check if we've hit our daily API limit
         if (this.isDailyQuotaExceeded()) {
             logger.warn('⚠️ Daily quota exceeded, using default category');
             return 'Spam';
         }
 
-        // Check if Gemini service is available (with caching)
+        // Make sure the AI service is working before making calls
         const isHealthy = await this.healthCheck();
         if (!isHealthy) {
             logger.warn('⚠️ Gemini service unavailable, using default category');
@@ -119,26 +118,26 @@ Reply:
         const startTime = Date.now();
 
         try {
-            // Prepare prompt with email content (truncated for efficiency)
+            // Prepare the prompt with the email content (shortened to save tokens)
             const prompt = this.CATEGORIZATION_PROMPT
                 .replace('{subject}', email.subject || '(no subject)')
                 .replace('{body}', this.sanitizeEmailBody(email.body));
 
-            // Call Gemini API with retry logic for rate limits
+            // Try calling the AI with retry logic for rate limit errors
             let attempts = 0;
-            const maxAttempts = 2; // Reduced attempts to save quota
+            const maxAttempts = 2; // Keep attempts low to save quota
 
             while (attempts < maxAttempts) {
                 try {
-                    // Enforce rate limiting before API call
+                    // Make sure we're not calling too fast
                     await this.enforceRateLimit();
 
-                    // Use the configured model (gemini-2.5-pro)
+                    // Use the configured AI model
                     let modelName = this.config.model;
 
                     const model = this.gemini.getGenerativeModel({ model: modelName });
 
-                    // Add timeout to prevent hanging
+                    // Add timeout to prevent hanging requests
                     const timeoutPromise = new Promise((_, reject) => {
                         setTimeout(() => reject(new Error('Request timeout')), 10000); // 10 second timeout
                     });
@@ -149,7 +148,7 @@ Reply:
                     ]);
                     const category = response.response?.text()?.trim() as EmailCategory;
 
-                    // Validate category
+                    // Make sure the AI gave us a valid category
                     const validCategories: EmailCategory[] = [
                         'Interested',
                         'Meeting Booked',
@@ -160,12 +159,12 @@ Reply:
 
                     const finalCategory = validCategories.includes(category) ? category : 'Spam';
 
-                    // Cache the result for future use
+                    // Save the result for future use
                     if (cacheKey) {
                         this.categoryCache.set(cacheKey, finalCategory);
                     }
 
-                    // Limit cache size to prevent memory issues
+                    // Keep cache size manageable to prevent memory issues
                     if (this.categoryCache.size > 500) { // Reduced cache size
                         const firstKey = this.categoryCache.keys().next().value;
                         if (firstKey) {
@@ -173,7 +172,7 @@ Reply:
                         }
                     }
 
-                    // Increment daily quota counter
+                    // Track this API call
                     this.incrementDailyQuota();
 
                     const duration = Date.now() - startTime;
@@ -185,11 +184,11 @@ Reply:
                 } catch (error: any) {
                     attempts++;
 
-                    // Check if it's a rate limit error or service unavailable
+                    // If it's a rate limit or service error, try again with delay
                     if (error.message?.includes('429') || error.message?.includes('quota') ||
                         error.message?.includes('503') || error.message?.includes('overloaded')) {
                         if (attempts < maxAttempts) {
-                            const delay = Math.pow(2, attempts) * 2000; // Exponential backoff
+                            const delay = Math.pow(2, attempts) * 2000; // Wait longer each time
                             logger.warn(`⚠️ Gemini service unavailable, retrying in ${delay}ms (attempt ${attempts}/${maxAttempts})`);
                             await this.delay(delay);
                             continue;
@@ -211,9 +210,10 @@ Reply:
     }
 
     /**
-     * Batch categorize multiple emails for better performance
+     * Processes multiple emails in batches to be more efficient with API calls
      */
     async categorizeEmailsBatch(emails: Email[]): Promise<Map<string, EmailCategory>> {
+        // If AI is disabled, return default categories for all emails
         if (!this.processingConfig.categorizationEnabled) {
             const results = new Map<string, EmailCategory>();
             emails.forEach(email => results.set(email.id, 'Spam'));
@@ -221,17 +221,17 @@ Reply:
         }
 
         const results = new Map<string, EmailCategory>();
-        const batchSize = Math.min(this.processingConfig.batchSize, 2); // Further reduced batch size
+        const batchSize = Math.min(this.processingConfig.batchSize, 2); // Keep batches small
 
         logger.info(`🤖 Starting batch categorization of ${emails.length} emails`);
 
-        // Process in batches to avoid API rate limits
+        // Process emails in small groups to avoid overwhelming the API
         for (let i = 0; i < emails.length; i += batchSize) {
             const batch = emails.slice(i, i + batchSize);
 
             const batchPromises = batch.map(async (email) => {
                 let attempts = 0;
-                const maxAttempts = Math.min(this.processingConfig.retryAttempts, 2); // Reduced attempts
+                const maxAttempts = Math.min(this.processingConfig.retryAttempts, 2); // Keep attempts low
 
                 while (attempts < maxAttempts) {
                     try {
@@ -253,7 +253,7 @@ Reply:
 
             await Promise.all(batchPromises);
 
-            // Longer delay between batches to respect rate limits
+            // Wait between batches to be nice to the API
             if (i + batchSize < emails.length) {
                 await this.delay(5000); // 5 second delay (increased)
             }
@@ -264,7 +264,7 @@ Reply:
     }
 
     /**
-     * Generate reply suggestion using RAG context
+     * Generates reply suggestions using relevant context from previous emails
      */
     async generateReplySuggestion(
         email: Email,
@@ -281,11 +281,13 @@ Reply:
         const startTime = Date.now();
 
         try {
+            // Combine all relevant context into one string
             const contextString = relevantContexts
                 .map(ctx => `- ${ctx.content}`)
                 .join('\n');
 
-           
+
+            // Handle different formats of the 'from' field safely
             let fromAddress: string;
             if (Array.isArray(email.from)) {
                 // Handle the original array format
@@ -299,17 +301,19 @@ Reply:
             }
 
 
+            // Build the prompt with email details and context
             const prompt = this.REPLY_PROMPT
                 .replace('{subject}', email.subject || '(no subject)')
                 .replace('{from}', fromAddress) // Use the safely determined fromAddress
                 .replace('{body}', this.sanitizeEmailBody(email.body))
                 .replace('{context}', contextString || 'No specific context available');
 
-            
+
+            // Call the AI to generate the reply
             const response = await this.gemini.getGenerativeModel({ model: this.config.model }).generateContent({
                 contents: [{ role: 'user', parts: [{ text: prompt }] }],
                 generationConfig: {
-                    temperature: 0.7, 
+                    temperature: 0.7,
                     maxOutputTokens: this.config.maxTokens,
                 },
                 systemInstruction: {
@@ -341,7 +345,7 @@ Reply:
     }
 
     /**
-     * Extract key information from email for RAG context retrieval
+     * Extracts keywords from email content to help find relevant context
      */
     extractEmailKeywords(email: Email): string[] {
         const text = `${email.subject} ${email.body}`.toLowerCase();
@@ -368,7 +372,7 @@ Reply:
     }
 
     /**
-     * Analyze email sentiment (positive, negative, neutral)
+     * Analyzes whether an email has positive, negative, or neutral sentiment
      */
     async analyzeEmailSentiment(email: Email): Promise<'positive' | 'negative' | 'neutral'> {
         // Check daily quota before making API call
@@ -413,7 +417,7 @@ Sentiment:
     }
 
     /**
-     * Check if email requires urgent response
+     * Checks if an email contains urgent keywords that require immediate attention
      */
     async checkUrgency(email: Email): Promise<boolean> {
         const urgentKeywords = [
@@ -427,9 +431,10 @@ Sentiment:
     }
 
     /**
-     * Private helper methods
+     * Helper methods for internal use
      */
 
+    // Cleans up email body text for AI processing
     private sanitizeEmailBody(body: string): string {
         // Remove excessive whitespace and limit length for API efficiency
         return body
@@ -438,8 +443,9 @@ Sentiment:
             .substring(0, 1000); // Reduced to 1000 characters to save tokens
     }
 
+    // Calculates how confident we are in a generated reply
     private calculateReplyConfidence(reply: string, contexts: RAGContext[]): number {
-        let confidence = 50; // Base confidence
+        let confidence = 50; // Start with base confidence
 
         // Boost confidence if we have relevant context
         if (contexts.length > 0) {
@@ -465,6 +471,7 @@ Sentiment:
         return Math.min(confidence, 95);
     }
 
+    // Simple delay function for rate limiting
     private delay(ms: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
@@ -496,6 +503,7 @@ Sentiment:
     /**
      * Daily quota management
      */
+    // Resets daily quota counter if it's a new day
     private resetDailyQuotaIfNeeded(): void {
         const today = new Date().toDateString();
         if (this.dailyQuotaTracker.date !== today) {
@@ -505,19 +513,21 @@ Sentiment:
         }
     }
 
+    // Increments the daily API call counter
     private incrementDailyQuota(): void {
         this.resetDailyQuotaIfNeeded();
         this.dailyQuotaTracker.calls++;
         logger.debug(`📊 Daily quota: ${this.dailyQuotaTracker.calls}/${this.DAILY_QUOTA_LIMIT}`);
     }
 
+    // Checks if we've hit our daily API limit
     private isDailyQuotaExceeded(): boolean {
         this.resetDailyQuotaIfNeeded();
         return this.dailyQuotaTracker.calls >= this.DAILY_QUOTA_LIMIT;
     }
 
     /**
-     * Simple keyword-based categorization to reduce API calls
+     * Simple keyword-based categorization to reduce API calls for obvious cases
      */
     private simpleKeywordCategorization(email: Email): EmailCategory | null {
         // Safely get subject and body, providing an empty string as a fallback.
@@ -557,7 +567,7 @@ Sentiment:
     }
 
     /**
-     * Generate cache key for email categorization
+     * Creates a unique cache key for an email based on its content
      */
     private generateCacheKey(email: Email): string {
         const content = `${email.subject?.toLowerCase() || ''} ${email.body?.toLowerCase() || ''}`;
@@ -565,7 +575,7 @@ Sentiment:
     }
 
     /**
-     * Health check for Gemini API with caching
+     * Checks if the Gemini API is working properly
      */
     async healthCheck(): Promise<boolean> {
         const now = Date.now();

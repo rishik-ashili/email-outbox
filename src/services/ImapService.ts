@@ -306,22 +306,13 @@ export class ImapService extends EventEmitter {
             });
 
             fetch.once('end', () => {
-                // =================================================================
-                // >> START: THIS IS THE CRITICAL FIX <<
-                // =================================================================
-
-                // After all messages in the batch are parsed, emit them one by one.
-                // This is the step that triggers the main application logic in app.ts.
+                
                 logger.debug(`[${this.accounts.get(accountId)?.label}] Emitting ${emails.length} new email(s) for processing.`);
                 emails.forEach(email => {
                     this.emit('newEmail', email);
                 });
 
-                // =================================================================
-                // >> END: CRITICAL FIX <<
-                // =================================================================
-
-                // After successfully fetching and emitting, mark them as seen.
+              
                 this.markEmailsAsSeen(accountId, uids);
 
                 resolve();
@@ -367,7 +358,6 @@ export class ImapService extends EventEmitter {
                 return;
             }
             logger.info(`✅ Real-time monitoring enabled for ${account.label}. Waiting for new mail events.`);
-            // After opening the box, the 'mail' listener is now active. We don't need to do anything else.
             enterIdle();
         });
     }

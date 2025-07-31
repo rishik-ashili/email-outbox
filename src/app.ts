@@ -63,7 +63,11 @@ class EmailOneboxApp {
 
         // CORS configuration
         this.app.use(cors({
-            origin: process.env.CORS_ORIGIN || 'http://localhost:3001',
+            origin: [
+                process.env.CORS_ORIGIN || 'http://localhost:3001',
+                'http://localhost:5173'
+            ],
+
             credentials: true,
             optionsSuccessStatus: 200
         }));
@@ -183,10 +187,6 @@ class EmailOneboxApp {
             await this.processNewEmail(email);
         });
 
-        // // Listen for email categorization events
-        // this.imapService.on('emailCategorized', async (email: Email, category: EmailCategory) => {
-        //     await this.notificationService.processEmailNotification(email, category);
-        // });
 
         // Listen for connection events
         this.imapService.on('connectionLost', (accountId: string) => {
@@ -207,11 +207,7 @@ class EmailOneboxApp {
         const startTime = Date.now();
 
         try {
-            // =================================================================
-            // >> START: NEW DEDUPLICATION LOGIC <<
-            // =================================================================
 
-            // Step 1: Check if this email's messageId already exists in Elasticsearch
             const existingEmail = await this.elasticsearchService.getEmailByMessageId(email.messageId);
 
             if (existingEmail) {
@@ -220,9 +216,7 @@ class EmailOneboxApp {
                 return;
             }
 
-            // =================================================================
-            // >> END: NEW DEDUPLICATION LOGIC <<
-            // =================================================================
+
 
             logger.info(`📧 Processing new email: ${email.subject} from ${email.from[0]?.address}`);
 
@@ -237,7 +231,6 @@ class EmailOneboxApp {
             }
 
             // Step 3: Index email in Elasticsearch
-            // We can be confident this is a new email because of the check above.
             try {
                 await this.elasticsearchService.indexEmail(email);
                 logger.info(`📊 Email indexed in Elasticsearch: ${email.id}`);
@@ -248,7 +241,6 @@ class EmailOneboxApp {
             }
 
             // NOTE: The updateEmailCategory call is no longer needed here,
-            // as the category is set on the email object *before* it is indexed for the first time.
 
             // Step 4: Store email context in vector database for RAG
             if (this.vectorService.isAvailable()) { // Added a check to ensure vector service is ready
@@ -296,7 +288,6 @@ class EmailOneboxApp {
             logger.error('❌ Failed to process email:', error);
 
             // Fallback indexing is less critical now with the deduplication check,
-            // but we can keep it as a last resort.
             try {
                 // Check again before fallback-indexing to be absolutely sure.
                 const exists = await this.elasticsearchService.getEmailByMessageId(email.messageId);
