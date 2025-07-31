@@ -1,24 +1,39 @@
+
 # Email Onebox System 📧
 
 A feature-rich email aggregation system that synchronizes multiple IMAP accounts in real-time, provides AI-powered email categorization, and includes advanced features like suggested replies using RAG (Retrieval-Augmented Generation).
 
-![Email Onebox System](https://img.shields.io/badge/Status-Production%20Ready-green.svg)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.2.2-blue.svg)
-![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg)
-![Docker](https://img.shields.io/badge/Docker-Required-blue.svg)
+![Status](https://img.shields.io/badge/Status-Production%20Ready-green.svg) ![TypeScript](https://img.shields.io/badge/TypeScript-5.2.2-blue.svg) ![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg) ![Docker](https://img.shields.io/badge/Docker-Required-blue.svg)
+
+## Table of Contents
+
+- [Features](#-features)
+- [Architecture](#️-architecture)
+- [Quick Start](#-quick-start)
+- [Configuration](#-configuration)
+- [API Endpoints Guide](#-api-endpoints-guide)
+- [Task-Based Help (How to...)](#-task-based-help-how-to)
+  - [How to Search for an Email](#how-to-search-for-an-email)
+  - [How to See Emails of a Specific Category](#how-to-see-emails-of-a-specific-category)
+  - [How to See System and Category Statistics](#how-to-see-system-and-category-statistics)
+  - [How to Generate an AI Reply to an Email](#how-to-generate-an-ai-reply-to-an-email)
+- [AI Quota Management](#-ai-quota-management)
+- [Testing & Verification](#-testing--verification)
+- [Troubleshooting](#-troubleshooting)
+- [Development](#-development)
+- [Deployment](#-deployment)
 
 ## 🎯 Features
 
-- **Real-time Email Sync**: Persistent IMAP connections with IDLE mode (NO polling!)
-- **AI-Powered Categorization**: Automatic email classification using Google Gemini AI
-- **Smart Search**: Elasticsearch-powered full-text search with advanced filters
-- **RAG-based Replies**: Context-aware reply suggestions using Pinecone vector database
-- **Multi-Platform Notifications**: Slack integration and webhook triggers
-- **Intelligent Email Chat**: Multi-turn conversations about your emails using Gemini AI
-- **Secure & Scalable**: Production-ready with comprehensive error handling
-- **Circuit Breaker Pattern**: Resilient external API calls
-- **Real-time Updates**: WebSocket support for live email updates
-- **AI Quota Management**: Intelligent caching and rate limiting for Gemini API
+- **Real-time Email Sync**: Persistent IMAP connections with a stable event-driven model (no inefficient polling).
+- **AI-Powered Categorization**: Automatic email classification using Google Gemini AI.
+- **Smart Search**: Elasticsearch-powered full-text search with advanced filters.
+- **RAG-based Replies**: Context-aware reply suggestions using Pinecone vector database.
+- **Multi-Platform Notifications**: Slack integration and webhook triggers for important emails.
+- **Intelligent Email Chat**: Multi-turn conversations about your emails using Gemini AI.
+- **Secure & Scalable**: Production-ready with comprehensive error handling and deduplication.
+- **Circuit Breaker Pattern**: Resilient external API calls.
+- **AI Quota Management**: Intelligent caching, rate limiting, and daily quota tracking for the Gemini API.
 
 ## 🏗️ Architecture
 
@@ -31,7 +46,7 @@ A feature-rich email aggregation system that synchronizes multiple IMAP accounts
          ▼                       ▼                       ▼
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │ Elasticsearch  │    │ Vector Database │    │   Express API   │
-│  (Storage)      │    │   (RAG/Pinecone)│    │   (Frontend)    │
+│  (Storage)      │    │   (RAG/Pinecone)│    │   (User Facing) │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
@@ -41,7 +56,7 @@ A feature-rich email aggregation system that synchronizes multiple IMAP accounts
 
 - **Node.js** 18+ and npm
 - **Docker** and Docker Compose
-- **Email accounts** with app passwords (Gmail, Outlook, Yahoo)
+- **Gmail accounts** with app passwords
 - **Google Gemini API key** (from Google AI Studio)
 - **Pinecone account** (free tier available)
 - **Slack workspace** (optional, for notifications)
@@ -57,107 +72,70 @@ npm install
 ### 2. Start Elasticsearch
 
 ```bash
-# Start Elasticsearch container
+# Start Elasticsearch container in the background
 docker-compose up -d elasticsearch
 
-# Verify it's running
-curl http://localhost:9200/_health
+# Verify it's running (wait a few seconds)
+curl http://localhost:9200
 ```
 
 ### 3. Configure Environment
 
 ```bash
-# Copy environment template
+# Copy the environment template
 cp env.example .env
 
-# Edit .env with your credentials
+# Edit the .env file with your credentials
+# Use a text editor like VS Code, nano, or vim
 nano .env
 ```
 
-### 4. Configure Email Accounts
-
-**For Gmail:**
-1. Enable 2-factor authentication
-2. Generate an [App Password](https://support.google.com/accounts/answer/185833)
-3. Use the app password, NOT your regular password
-
-```env
-EMAIL1_USER=your-email@gmail.com
-EMAIL1_PASS=your-app-password
-EMAIL1_HOST=imap.gmail.com
-EMAIL1_PORT=993
-EMAIL1_LABEL=Gmail
-```
-
-**For Outlook/Office365:**
-```env
-EMAIL2_USER=your-email@outlook.com
-EMAIL2_PASS=your-password
-EMAIL2_HOST=outlook.office365.com
-EMAIL2_PORT=993
-EMAIL2_LABEL=Outlook
-```
-
-### 5. Start the Application
+### 4. Start the Application
 
 ```bash
-# Development mode with auto-reload
-npm install
+# Start in development mode with auto-reload
 npm run dev
 
-# Production mode
+# Or, for production:
 npm run build
 npm start
-```
-
-## 📊 System Status
-
-Check if all services are running:
-
-```bash
-curl http://localhost:3000/health
-```
-
-Expected response:
-```json
-{
-  "status": "ok",
-  "services": {
-    "elasticsearch": true,
-    "gemini": true,
-    "notifications": true,
-    "vector": true,
-    "imap": true,
-    "chat": true
-  }
-}
 ```
 
 ## 🔧 Configuration
 
 ### Core Environment Variables
 
-#### Email Accounts (Required)
+Fill these in your `.env` file.
+
+#### Email Accounts (Gmail Recommended)
+
+For each Gmail account:
+1.  Enable 2-factor authentication.
+2.  Generate a 16-character [App Password](https://support.google.com/accounts/answer/185833).
+3.  Use the App Password, NOT your regular password.
+
 ```env
-# Gmail Account (use App Password!)
-EMAIL1_USER=your-gmail@gmail.com
-EMAIL1_PASS=your-app-password
+# Gmail Account #1 (use App Password!)
+EMAIL1_USER=your-first-email@gmail.com
+EMAIL1_PASS=your-16-char-app-password
 EMAIL1_HOST=imap.gmail.com
 EMAIL1_PORT=993
+EMAIL1_LABEL=Gmail-1
 
-# Outlook Account
-EMAIL2_USER=your-email@outlook.com
-EMAIL2_PASS=your-password
-EMAIL2_HOST=outlook.office365.com
+# Gmail Account #2
+EMAIL2_USER=your-second-email@gmail.com
+EMAIL2_PASS=another-16-char-app-password
+EMAIL2_HOST=imap.gmail.com
 EMAIL2_PORT=993
+EMAIL2_LABEL=Gmail-2
 ```
 
-#### AI Services (Required)
+#### AI & Vector DB Services (Required)
+
 ```env
-# Google Gemini AI
+# Google Gemini AI (for classification and chat)
 GEMINI_API_KEY=your-gemini-api-key
-GEMINI_MODEL=gemini-2.5-pro
-GEMINI_TEMPERATURE=0
+GEMINI_EMBEDDING_API_KEY=your-gemini-api-key-for-embeddings # Can be the same key
 
 # Pinecone (for RAG)
 PINECONE_API_KEY=your-pinecone-api-key
@@ -166,798 +144,249 @@ PINECONE_ENVIRONMENT=us-east-1
 ```
 
 #### Notifications (Optional)
+
 ```env
 # Slack Integration
 SLACK_BOT_TOKEN=xoxb-your-slack-bot-token
-SLACK_CHANNEL=#general
+SLACK_CHANNEL=#your-channel-name
 SLACK_ENABLED=true
 
-# Webhook Integration  
+# Webhook Integration
 WEBHOOK_URL=https://webhook.site/your-unique-url
 WEBHOOK_ENABLED=true
 ```
 
-#### System Configuration
-```env
-PORT=3000
-NODE_ENV=development
-ELASTICSEARCH_URL=http://localhost:9200
-LOG_LEVEL=info
-```
-#### Delete local cache 
-```env
-curl -X DELETE "http://localhost:9200/emails"
-```
-
-#### In case of existing node running 
-```env
-taskkill /F /IM node.exe
-```
-
 ### Email Categories
 
-The system automatically categorizes emails into these **exact** categories:
+The system automatically categorizes emails into: `Interested`, `Meeting Booked`, `Not Interested`, `Spam`, `Out of Office`.
 
-- **`Interested`** - Shows genuine interest in product/service/opportunity
-- **`Meeting Booked`** - About scheduling/confirming meetings or calls  
-- **`Not Interested`** - Explicit decline or disinterest
-- **`Spam`** - Promotional, suspicious, or irrelevant content
-- **`Out of Office`** - Auto-reply indicating unavailability
+## 📡 API Endpoints Guide
+
+All `curl` commands are for PowerShell. For other shells (bash, zsh), you may need to adjust quoting.
+
+### System & Health
+
+#### Health Check
+Check the status of all connected services.
+```bash
+curl http://localhost:3000/health
+```
+
+#### System Statistics
+Get a dashboard overview of email counts, categories, connections, and AI quota.
+```bash
+curl http://localhost:3000/api/stats
+```
+
+### Email Management
+
+#### Search Emails
+A powerful endpoint to find emails with various filters.
+```bash
+# Basic keyword search
+curl "http://localhost:3000/api/emails/search?q=partnership"
+
+# Search by category
+curl "http://localhost:3000/api/emails/search?category=Interested"
+
+# Combined search (Note: %20 is a URL-encoded space)
+curl "http://localhost:3000/api/emails/search?category=Meeting%20Booked&q=confirmed"
+```
+
+#### Get a Specific Email
+Retrieve a single email by its unique ID.
+```bash
+# Replace :id with an actual email ID
+curl http://localhost:3000/api/emails/:id
+```
+
+#### Generate AI Reply Suggestion
+Generate a contextual reply for a specific email.
+```bash
+# Replace :id with an actual email ID
+curl -X POST http://localhost:3000/api/emails/:id/reply
+```
+
+### Account Management
+
+#### List Connected Accounts
+See all configured email accounts and their connection status.
+```bash
+curl http://localhost:3000/api/accounts
+```
+
+#### Add a New Email Account
+Add a new IMAP account to the system.
+```bash
+# 1. Create a file 'account.json' with your credentials
+# {
+#   "label": "My New Gmail",
+#   "user": "new-email@gmail.com",
+#   "password": "new-app-password",
+#   "host": "imap.gmail.com",
+#   "port": 993
+# }
+# 2. Run the command
+curl -X POST http://localhost:3000/api/accounts -H "Content-Type: application/json" -d "@account.json"
+```
+
+### AI Chat
+
+#### Start or Continue a Chat
+The main endpoint for interacting with the email chat AI.
+```powershell
+# 1. Create a file 'chat-request.json'
+# {
+#   "message": "Summarize my emails about 'Project X'"
+# }
+# 2. Run the command
+curl -X POST http://localhost:3000/api/chat -H "Content-Type: application/json" -d (Get-Content -Raw chat-request.json)
+```
+
+#### Get Chat Session History
+Retrieve all messages for a specific chat session.
+```bash
+# Replace :sessionId with an actual session ID from a chat response
+curl http://localhost:3000/api/chat/:sessionId
+```
+
+## 📖 Task-Based Help (How to...)
+
+Here’s how to perform common tasks using the API.
+
+### How to Search for an Email
+
+Use the `/api/emails/search` endpoint with the `q` parameter.
+**Goal:** Find all emails that mention "proposal".
+```bash
+curl "http://localhost:3000/api/emails/search?q=proposal"
+```
+
+### How to See Emails of a Specific Category
+
+Use the `/api/emails/search` endpoint with the `category` parameter.
+**Goal:** View all emails that the AI has marked as `Not Interested`.
+```bash
+curl "http://localhost:3000/api/emails/search?category=Not%20Interested"
+```
+
+### How to See System and Category Statistics
+
+Use the `/api/stats` endpoint.
+**Goal:** Check how many emails are in each category and the current AI quota usage.
+```bash
+curl http://localhost:3000/api/stats
+```
+Look for the `categoryCounts` and `ai.quota` objects in the JSON response.
+
+### How to Generate an AI Reply to an Email
+
+This is a two-step process.
+**Goal:** Generate a reply for an "Interested" email.
+
+**Step 1: Find the ID of an "Interested" email.**
+```bash
+curl "http://localhost:3000/api/emails/search?category=Interested&limit=1"
+```
+From the response, copy the `id` value (e.g., `5d12b1ac-e785-4c5e-ba1d-efb3bf4e54a2`).
+
+**Step 2: Request the reply using that ID.**
+```bash
+# Replace the example ID with the one you copied
+curl -X POST http://localhost:3000/api/emails/5d12b1ac-e785-4c5e-ba1d-efb3bf4e54a2/reply
+```
+The response will contain the `suggestedReply` from the AI.
 
 ## 🤖 AI Quota Management
 
-### Problem Solved
-- **Issue**: Gemini API daily quota exceeded (100 requests/day free tier)
-- **Result**: All emails categorized as "Spam" due to API failures
-- **Solution**: Comprehensive quota management with intelligent caching
+This system is designed to be mindful of free-tier API limits.
+- **Daily Quota Tracking:** A conservative limit on daily API calls with automatic reset.
+- **Intelligent Caching:** Avoids re-categorizing the same email.
+- **Rate Limiting:** Prevents sending too many requests per minute.
+- **Content Optimization:** Truncates long emails to save tokens.
 
-### Features Implemented
-
-#### 1. Daily Quota Tracking
-- ✅ **Conservative Limit**: 80 calls/day (100 - 20 buffer)
-- ✅ **Automatic Reset**: Daily quota resets at midnight
-- ✅ **Real-time Monitoring**: Track calls made vs. limit
-
-#### 2. Intelligent Caching
-- ✅ **Email Categorization Cache**: Avoid duplicate API calls
-- ✅ **Health Check Cache**: 5-minute cache for service status
-- ✅ **Cache Size Management**: 500 entries max to prevent memory issues
-
-#### 3. Rate Limiting Optimization
-- ✅ **Reduced Rate**: 1 request/minute (was 3)
-- ✅ **Exponential Backoff**: Smart retry logic
-- ✅ **Reduced Attempts**: 2 max attempts (was 3)
-
-#### 4. Content Optimization
-- ✅ **Truncated Content**: 1000 chars max (was 2000)
-- ✅ **Efficient Prompts**: Streamlined categorization prompts
-- ✅ **Batch Processing**: Reduced batch size to 5 emails
-
-### AI Control Endpoints
-
+#### AI Control Endpoints
 ```bash
-# Monitor quota usage
-GET /api/ai/rate-limit-status
-
-# Disable AI categorization when quota is low
-POST /api/ai/disable-categorization
-
-# Re-enable AI categorization
-POST /api/ai/enable-categorization
-
-# Clear AI cache to free memory
-POST /api/ai/clear-cache
-```
-
-### Current Status Check
-```bash
+# Monitor current quota and rate limit status
 curl http://localhost:3000/api/ai/rate-limit-status
+
+# Manually disable AI categorization if quota is low
+curl -X POST http://localhost:3000/api/ai/disable-categorization
+
+# Re-enable it later
+curl -X POST http://localhost:3000/api/ai/enable-categorization
 ```
-
-Expected response:
-```json
-{
-  "success": true,
-  "data": {
-    "quota": {
-      "calls": 0,
-      "limit": 80,
-      "date": "Wed Jul 30 2025"
-    },
-    "rateLimit": {
-      "callCount": 0,
-      "lastCall": 0,
-      "limit": 1
-    },
-    "categorizationEnabled": true,
-    "model": "gemini-2.5-pro"
-  }
-}
-```
-
-## 📡 API Endpoints
-
-### Core Endpoints
-
-#### Health Check
-```http
-GET /health
-```
-
-#### Email Search
-```http
-GET /api/emails/search?q=meeting&category=Interested&page=1&limit=20
-```
-
-**Query Parameters:**
-- `q` - Search query (searches subject, body, from, to)
-- `account` - Filter by email account
-- `category` - Filter by AI category
-- `from` - Filter by sender
-- `to` - Filter by recipient  
-- `dateFrom` - Start date (ISO string)
-- `dateTo` - End date (ISO string)
-- `hasAttachments` - Filter emails with attachments (true/false)
-- `page` - Page number (default: 1)
-- `limit` - Results per page (default: 20)
-- `sortBy` - Sort field: `date`, `subject`, `from`
-- `sortOrder` - Sort order: `asc`, `desc`
-
-#### Get Specific Email
-```http
-GET /api/emails/:id
-```
-
-#### Generate Reply Suggestion
-```http
-POST /api/emails/:id/reply
-```
-
-Returns AI-generated reply with confidence score and context used.
-
-#### Email Statistics
-```http
-GET /api/stats
-```
-
-Returns dashboard statistics including category counts, account status, AI quota status, etc.
-
-#### Account Management
-```http
-GET /api/accounts
-```
-
-Returns list of connected email accounts with connection status.
-
-#### Test Notifications
-```http
-POST /api/notifications/test
-```
-
-Sends test notifications to verify Slack/webhook configuration.
-
-### RAG Context Management
-
-#### Add Context
-```http
-POST /api/contexts
-Content-Type: application/json
-
-{
-  "content": "For job applications, share meeting link: https://cal.com/interview",
-  "type": "job_search",
-  "priority": "high",
-  "tags": ["job", "interview", "meeting"]
-}
-```
-
-### Chat with AI About Your Emails
-
-#### Start/Continue Chat
-```http
-POST /api/chat
-Content-Type: application/json
-
-{
-  "sessionId": "optional-existing-session-id",
-  "message": "Summarize my emails from John Smith",
-  "emailIds": ["email-id-1", "email-id-2"]
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "sessionId": "chat-session-uuid",
-    "message": {
-      "id": "message-id",
-      "role": "model",
-      "content": "Based on your emails from John Smith...",
-      "timestamp": "2024-01-29T10:30:00Z"
-    },
-    "suggestedActions": ["Generate reply", "Schedule meeting"]
-  }
-}
-```
-
-#### Get Chat Session
-```http
-GET /api/chat/:sessionId
-```
-
-#### Get All Chat Sessions
-```http
-GET /api/chat?limit=10
-```
-
-#### Delete Chat Session
-```http
-DELETE /api/chat/:sessionId
-```
-
-#### Chat Statistics
-```http
-GET /api/chat/stats
-```
-
-**Example Chat Conversations:**
-- "What are my most important emails today?"
-- "Summarize my conversation with Sarah from last week"
-- "Help me draft a reply to the meeting request"
-- "Which emails need urgent attention?"
-- "Find all emails about the project proposal"
-
-#### How to Configure Slack Notifications
-
-You need a "Bot Token" from a Slack App.
-
-**Step 1: Create a Slack App and Get Your Bot Token**
-
-1.  Go to the [Slack API Apps page](https://api.slack.com/apps) and click **"Create New App"**.
-2.  Choose **"From scratch"**.
-3.  Give your app a name (e.g., "Email Onebox Notifier") and select your workspace. Click **"Create App"**.
-4.  You'll be taken to the app's settings. In the left sidebar, click on **"OAuth & Permissions"**.
-5.  Scroll down to the **"Scopes"** section. Under "Bot Token Scopes," click **"Add an OAuth Scope"**.
-6.  Add the `chat:write` permission. This allows the bot to post messages.
-7.  Scroll back up to the top of the page and click **"Install to Workspace"**.
-8.  Click **"Allow"** on the authorization screen.
-9.  You will now see a **"Bot User OAuth Token"** that starts with `xoxb-`. **This is the token you need.** Copy it.
-
-**Step 2: Add the Bot to Your Slack Channel**
-
-1.  Open your Slack workspace.
-2.  Go to the channel you want notifications in (e.g., `#general`).
-3.  Type `/invite @[Your Bot Name]` (e.g., `/invite @Email Onebox Notifier`) and send the message. This gives the bot permission to post in that channel.
-
-**Step 3: Update Your `.env` File**
-
-Open your `.env` file and update the Slack section with the token you copied and the channel name.
-
-```env
-# .env
-
 
 ## 🧪 Testing & Verification
 
-### Phase 1: Setup Verification
-
-1. **System Health Check**
-```bash
-curl http://localhost:3000/health
-```
-Expected: All services show `true`
-
-2. **Baseline Stats**
-```bash
-curl http://localhost:3000/api/stats
-```
-Expected: Shows current email counts and AI quota status
-
-3. **Chat Test**
-```bash
-curl -X POST "http://localhost:3000/api/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello, what can you help me with?"}'
-```
-
-### Phase 2: Email Account Setup
-
-1. **Add Your Real Email Account**
-```bash
-# Create account.json with your credentials
-{
-  "label": "My Gmail",
-  "user": "your-email@gmail.com",
-  "password": "your-app-password",
-  "host": "imap.gmail.com",
-  "port": 993
-}
-
-# Add the account
-curl -X POST "http://localhost:3000/api/accounts" \
-  -H "Content-Type: application/json" \
-  -d @account.json
-```
-
-2. **Verify Account Connection**
-```bash
-curl http://localhost:3000/api/accounts
-```
-
-### Phase 3: Test Email Processing
-
-Send these test emails from **another email account** to your configured Gmail:
-
-#### 📧 Test Email 1: Interested Lead
-```
-To: your-configured-gmail@gmail.com
-Subject: Re: Software Development Partnership Opportunity
-
-Hi,
-
-I'm very interested in discussing a potential software development partnership. 
-Our company is looking to build a new mobile application and would like to 
-explore working with your team.
-
-Could we schedule a call this week to discuss the project requirements?
-
-Best regards,
-John Smith
-TechCorp Industries
-```
-
-#### 📧 Test Email 2: Meeting Booking  
-```
-To: your-configured-gmail@gmail.com
-Subject: Confirmed: Strategy Meeting Tomorrow at 2 PM
-
-Hi,
-
-This is to confirm our strategy meeting scheduled for tomorrow at 2 PM.
-The meeting will be held via Zoom. Please find the meeting details below:
-
-Meeting Link: https://zoom.us/j/123456789
-Time: Tomorrow, 2:00 PM - 3:00 PM EST
-
-See you there!
-
-Best,
-Sarah Johnson
-```
-
-#### 📧 Test Email 3: Not Interested
-```
-To: your-configured-gmail@gmail.com
-Subject: Re: Business Proposal
-
-Thank you for your proposal, but we are not interested at this time.
-We have already partnered with another vendor for this project.
-
-Best regards,
-Mike Wilson
-```
-
-### Phase 4: Verification Commands
-
-**Wait 2-3 minutes** after sending emails, then run:
-
-1. **Check Updated Statistics**
-```bash
-curl http://localhost:3000/api/stats
-```
-Expected: `totalEmails` should increase, category counts should show distribution
-
-2. **View Processed Emails**
-```bash
-curl http://localhost:3000/api/emails?limit=10
-```
-Expected: JSON array with emails, each having a `category` field
-
-3. **Test Category Filtering**
-```bash
-# Check interested leads
-curl "http://localhost:3000/api/emails?category=Interested"
-
-# Check meeting bookings  
-curl "http://localhost:3000/api/emails?category=Meeting%20Booked"
-
-# Check not interested
-curl "http://localhost:3000/api/emails?category=Not%20Interested"
-```
-
-4. **Test Vector Database (RAG)**
-```bash
-# Test if AI can find emails about specific topics
-curl -X POST "http://localhost:3000/api/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "What emails did I receive about software development?"}'
-
-# Test contextual responses
-curl -X POST "http://localhost:3000/api/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "How should I respond to partnership emails?"}'
-```
-
-5. **Test Email Search**
-```bash
-# Search by keyword
-curl "http://localhost:3000/api/emails/search?q=meeting"
-
-# Search by sender
-curl "http://localhost:3000/api/emails/search?from=john@example.com"
-```
-
-### Expected Results ✅
-
-#### Terminal Logs Should Show:
-```
-info: 📧 Processing new email: Re: Software Development Partnership from john@example.com
-info: 🤖 AI categorizing email with Gemini
-info: 📊 Email categorized as: Interested  
-info: 🧠 Stored email context in vector database: email-123
-info: ✅ Email processed successfully
-```
-
-#### API Stats Should Show:
-```json
-{
-  "totalEmails": 685,  // Increased count
-  "categoryCounts": {
-    "Interested": 1,     // ← New properly categorized emails
-    "Meeting Booked": 1, // ← New properly categorized emails  
-    "Not Interested": 1, // ← New properly categorized emails
-    "Spam": 682,         // ← Previous emails remain as spam
-    "Out of Office": 0
-  },
-  "ai": {
-    "quota": {
-      "calls": 3,
-      "limit": 80,
-      "date": "Wed Jul 30 2025"
-    }
-  }
-}
-```
-
-## 🔍 Advanced Usage
-
-### Real-time Email Processing Pipeline
-
-```
-New Email Received (IMAP IDLE)
-         ↓
-AI Categorization (Gemini)
-         ↓
-Elasticsearch Indexing
-         ↓
-Vector Database Storage (Pinecone)
-         ↓
-Notification Logic (if "Interested")
-         ↓
-Slack/Webhook Notifications
-```
-
-### Search Examples
-
-**Find all interested emails from last week:**
-```http
-GET /api/emails/search?category=Interested&dateFrom=2024-01-15&dateTo=2024-01-22
-```
-
-**Search for job-related emails:**
-```http
-GET /api/emails/search?q=job position career employment
-```
-
-**Find emails with attachments from specific sender:**
-```http
-GET /api/emails/search?from=recruiter@company.com&hasAttachments=true
-```
-
-### RAG Reply Generation
-
-The system uses Pinecone vector database to store context information that helps generate better replies:
-
-1. **Extract keywords** from incoming email
-2. **Search vector database** for relevant context
-3. **Generate reply** using Gemini with retrieved context
-4. **Return suggestion** with confidence score
-
-## 🔧 Development
-
-### Running Tests
-
-```bash
-# Unit tests
-npm test
-
-# Watch mode
-npm run test:watch
-
-# Coverage report
-npm run test:coverage
-```
-
-### Development Scripts
-
-```bash
-# Start with auto-reload
-npm run dev
-
-# Build TypeScript
-npm run build
-
-# Start Elasticsearch only
-npm run setup:elasticsearch
-
-# View Elasticsearch logs
-npm run logs:elasticsearch
-
-# Full development setup (backend + frontend)
-npm run dev:full
-```
-
-### Project Structure
-
-```
-email-onebox/
-├── src/
-│   ├── controllers/     # API request handlers
-│   ├── services/        # Core business logic
-│   │   ├── ImapService.ts          # 🚨 CRITICAL: Real-time email sync
-│   │   ├── ElasticsearchService.ts # Email storage & search
-│   │   ├── AIService.ts            # Gemini AI categorization
-│   │   ├── ChatService.ts          # AI chat about emails
-│   │   ├── NotificationService.ts  # Slack/webhook notifications
-│   │   └── VectorService.ts        # RAG implementation
-│   ├── models/          # Data models
-│   ├── routes/          # API routes
-│   ├── utils/           # Utilities (logger, validators)
-│   ├── types/           # TypeScript definitions
-│   └── app.ts           # Main Express application
-├── frontend/            # React frontend (optional)
-├── docker-compose.yml   # Elasticsearch container
-├── package.json
-├── tsconfig.json
-└── env.example
-```
-
-### Logging
-
-Logs are written to:
-- `logs/email-onebox.log` - All application logs
-- `logs/error.log` - Error logs only
-- `logs/email-processing.log` - Detailed email processing (JSON format)
-
-View live logs:
-```bash
-tail -f logs/email-onebox.log
-```
-
-## 🛡️ Security
-
-### Best Practices Implemented
-
-- **App Passwords**: Use app-specific passwords, never regular passwords
-- **Environment Variables**: All sensitive data in environment variables
-- **Rate Limiting**: API rate limiting to prevent abuse
-- **Input Validation**: All email content sanitized before AI processing
-- **CORS Configuration**: Proper CORS setup for frontend integration
-- **Helmet.js**: Security headers for Express
-- **Connection Security**: TLS-encrypted IMAP connections
-
-### Security Checklist
-
-- [ ] Use app passwords for Gmail accounts
-- [ ] Keep Gemini API keys secure
-- [ ] Use HTTPS in production
-- [ ] Configure firewall rules
-- [ ] Monitor logs for suspicious activity
-- [ ] Regular dependency updates
-
-## 🚀 Deployment
-
-### Production Deployment
-
-1. **Environment Setup**
-```bash
-# Set production environment
-export NODE_ENV=production
-
-# Use PM2 for process management
-npm install -g pm2
-pm2 start dist/app.js --name email-onebox
-```
-
-2. **Elasticsearch Configuration**
-```bash
-# Increase heap size for production
-docker-compose up -d
-# Edit docker-compose.yml: ES_JAVA_OPTS=-Xms1g -Xmx1g
-```
-
-3. **Monitoring Setup**
-```bash
-# PM2 monitoring
-pm2 monitor
-
-# Log rotation
-pm2 install pm2-logrotate
-```
-
-### Docker Deployment
-
-```dockerfile
-# Dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY dist ./dist
-EXPOSE 3000
-CMD ["node", "dist/app.js"]
-```
-
-### Performance Optimizations
-
-- **Connection Pooling**: Reuse IMAP connections efficiently
-- **Batch Processing**: Process multiple emails in batches
-- **Caching**: Cache AI categorization results
-- **Email Deduplication**: Check messageId before indexing
-- **Circuit Breakers**: Prevent cascade failures
-
-## 📊 Monitoring
-
-### Key Metrics to Monitor
-
-- **Email Processing Rate**: Emails processed per minute
-- **IMAP Connection Health**: Connection status for all accounts
-- **AI Categorization Accuracy**: Category distribution over time  
-- **Elasticsearch Performance**: Search response times
-- **Notification Delivery**: Success rates for Slack/webhooks
-- **System Resources**: Memory usage, CPU usage
-- **AI Quota Usage**: Daily API call consumption
-
-### Health Check Endpoints
-
-```bash
-# Overall system health
-curl http://localhost:3000/health
-
-# Email statistics
-curl http://localhost:3000/api/stats
-
-# Account connection status
-curl http://localhost:3000/api/accounts
-
-# AI quota status
-curl http://localhost:3000/api/ai/rate-limit-status
-```
+Send test emails to your configured accounts and use the API endpoints above to verify:
+1.  Emails appear via `/api/emails`.
+2.  Statistics update via `/api/stats`.
+3.  Emails are correctly categorized.
+4.  Slack/webhook notifications are sent for "Interested" emails.
+5.  AI replies can be generated.
 
 ## 🐛 Troubleshooting
 
-### Common Issues
-
 #### IMAP Connection Fails
-```bash
-# Check credentials and app passwords
-# Gmail: Use app password, not regular password
-# Outlook: Check if 2FA is enabled
-
-# Test IMAP connection manually
-telnet imap.gmail.com 993
-```
+- Ensure you are using a **16-character App Password** for Gmail, not your regular password.
+- Double-check the IMAP host, port, and user settings in your `.env` file.
 
 #### Elasticsearch Connection Error
-```bash
-# Check if container is running
-docker ps | grep elasticsearch
-
-# Check logs
-docker logs elasticsearch
-
-# Restart container
-docker-compose restart elasticsearch
-```
-
-#### Gemini API Errors
-```bash
-# Check Gemini API key validity in logs
-grep "Gemini.*failed" logs/email-onebox.log
-
-# Monitor rate limits in logs
-grep "rate limit" logs/email-onebox.log
-
-# Check quota status
-curl http://localhost:3000/api/ai/rate-limit-status
-```
-
-#### High Memory Usage
-```bash
-# Monitor memory usage
-npm run logs:memory
-
-# Restart application
-pm2 restart email-onebox
-
-# Clear AI cache
-curl -X POST http://localhost:3000/api/ai/clear-cache
-```
+- Make sure the Docker container is running: `docker ps`.
+- If not, start it: `docker-compose up -d elasticsearch`.
 
 #### All Emails Categorized as "Spam"
+- This is a symptom of AI categorization failing.
+- Check your AI quota: `curl http://localhost:3000/api/ai/rate-limit-status`.
+- Verify your `GEMINI_API_KEY` is correct.
+
+#### Resetting the System
+To start fresh, you need to clear your data.
 ```bash
-# Check AI quota status
-curl http://localhost:3000/api/ai/rate-limit-status
-
-# If quota exceeded, wait for reset or upgrade API plan
-# If service unavailable, check Gemini API key
-
-# Test AI health
-curl http://localhost:3000/health
+# 1. Stop the application (Ctrl+C)
+# 2. Delete the Elasticsearch index
+curl -X DELETE "http://localhost:9200/emails"
+# 3. Delete and recreate the index in the Pinecone console
+# 4. Restart the application
 ```
 
-### Debug Mode
+## 🔧 Development
 
+### Project Structure
+```
+email-onebox/
+├── src/
+│   ├── services/  # Core business logic (ImapService, AIService, etc.)
+│   ├── types/     # TypeScript definitions
+│   ├── utils/     # Utilities (logger, etc.)
+│   └── app.ts     # Main Express application & API routes
+├── docker-compose.yml
+└── ...
+```
+
+### Scripts
 ```bash
-# Enable debug logging
-export DEBUG=email-onebox:*
-export LOG_LEVEL=debug
-
-# Start with detailed logging
+# Start in development mode
 npm run dev
+
+# Build for production
+npm run build
+
+# Start in production
+npm start
 ```
 
-## 📈 Performance Benchmarks
+## 🚀 Deployment
 
-**Typical Performance (on modest hardware):**
+Use a process manager like PM2 for production.
+```bash
+# Install PM2 globally
+npm install -g pm2
 
-- **Email Sync**: 50-100 emails/minute
-- **AI Categorization**: 10-20 emails/minute  
-- **Search Response**: <200ms for typical queries
-- **Reply Generation**: 2-5 seconds per email
-- **Memory Usage**: 200-500MB (depending on email volume)
-- **AI Quota**: 80 calls/day (conservative limit)
+# Build the app
+npm run build
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch: `git checkout -b feature/amazing-feature`
-3. Commit changes: `git commit -m 'Add amazing feature'`
-4. Push to branch: `git push origin feature/amazing-feature`
-5. Open Pull Request
-
-### Development Guidelines
-
-- Follow TypeScript strict mode
-- Add comprehensive error handling
-- Include unit tests for new features
-- Update documentation
-- Follow existing code style
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **Google** for powerful Gemini AI capabilities
-- **Elastic** for excellent search functionality  
-- **Pinecone** for vector database services
-- **Slack** for notification integration
-- **Node.js Community** for excellent libraries
-
-## 📞 Support
-
-- **Documentation**: See this README and inline code comments
-- **Issues**: Create an issue on GitHub
-- **Logs**: Check `logs/` directory for detailed information
-- **Health**: Use `/health` endpoint for system status
-- **AI Quota**: Monitor at `/api/ai/rate-limit-status`
-
----
-
-**🎉 Ready to revolutionize your email management!**
-
-Start by running `npm run dev` and watch your emails get intelligently categorized in real-time! 
+# Start with PM2
+pm2 start dist/app.js --name email-onebox
+```
