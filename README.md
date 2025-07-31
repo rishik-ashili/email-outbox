@@ -3,6 +3,7 @@
 # Email Onebox System 📧
 
 A feature-rich email aggregation system that synchronizes multiple IMAP accounts in real-time, provides AI-powered email categorization, and includes advanced features like suggested replies using RAG (Retrieval-Augmented Generation).
+📹 [Watch Demo Video](https://drive.google.com/file/d/1yGJiDNNIUDUyFUYUV-MDHX0-wK_YQSfy/view?usp=sharing)
 
 ![Status](https://img.shields.io/badge/Status-Production%20Ready-green.svg) ![TypeScript](https://img.shields.io/badge/TypeScript-5.2.2-blue.svg) ![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg) ![Docker](https://img.shields.io/badge/Docker-Required-blue.svg)
 
