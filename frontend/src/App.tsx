@@ -18,10 +18,7 @@ interface ChatMessage {
   role: 'user' | 'model'; content: string;
 }
 
-// ====================================================================
-//  MEMOIZED CHILD COMPONENTS
-//  (Moved outside the App component to prevent re-creation on render)
-// ====================================================================
+
 
 interface SidebarProps {
   selectedCategory: EmailCategory | 'All';
@@ -162,9 +159,7 @@ const ChatWidget = memo(({ isOpen, onToggle, messages, isLoading, inputValue, on
   </>
 ));
 
-// ====================================================================
-//  MAIN APP COMPONENT (STATE AND LOGIC HUB)
-// ====================================================================
+
 
 function App() {
   const [emails, setEmails] = useState<Email[]>([]);
