@@ -7,6 +7,11 @@ A feature-rich email aggregation system that synchronizes multiple IMAP accounts
 
 ![Status](https://img.shields.io/badge/Status-Production%20Ready-green.svg) ![TypeScript](https://img.shields.io/badge/TypeScript-5.2.2-blue.svg) ![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg) ![Docker](https://img.shields.io/badge/Docker-Required-blue.svg)
 
+---
+<img width="1919" height="925" alt="image" src="https://github.com/user-attachments/assets/f7ef47d2-7f0b-4068-b6d5-c63faea304a6" />
+<img width="1919" height="905" alt="image" src="https://github.com/user-attachments/assets/5158e977-0018-407e-a1ff-b1e33384519f" />
+
+
 ## Table of Contents
 
 - [Features](#-features)
